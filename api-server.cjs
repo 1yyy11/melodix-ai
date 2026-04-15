@@ -66,15 +66,123 @@ const requireAuth = (req, res, next) => {
     return res.status(401).json({ error: 'Authentication required' });
 };
 
-// Путь к папке с MP3
-const AUDIO_DIR = path.join(__dirname, 'scripts', 'downloaded_audio');
+
+
+// Получить рекомендации для пользователя
+app.get('/api/recommendations', requireAuth, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT r.*, t.title, a.name as artist_name, t.genre, t.mood, t.tempo, t.duration, t.cover_url
+            FROM recommendations r
+            JOIN tracks t ON r.track_id = t.id
+            JOIN artists a ON t.artist_id = a.id
+            WHERE r.user_id = $1 AND r.expires_at > NOW()
+            ORDER BY r.score DESC
+            LIMIT 30
+        `, [req.userId]);
+        
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error fetching recommendations:', error);
+        res.status(500).json({ error: 'Failed to get recommendations' });
+    }
+});
+
+// POST /api/plays - добавить в историю прослушиваний
+app.post('/api/plays', requireAuth, async (req, res) => {
+    const { trackId } = req.body;
+    try {
+        await pool.query(
+            'INSERT INTO plays (id, user_id, track_id, played_at) VALUES (gen_random_uuid(), $1, $2, NOW())',
+            [req.userId, trackId]
+        );
+        await pool.query('UPDATE tracks SET play_count = play_count + 1 WHERE id = $1', [trackId]);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error saving play:', error);
+        res.status(500).json({ error: 'Failed to save play history' });
+    }
+});
+// Получить статистику пользователя
+app.get('/api/user/stats', requireAuth, async (req, res) => {
+    try {
+        // Количество треков пользователя (через artist_id или user_id)
+        const tracksResult = await pool.query(
+            `SELECT COUNT(*) FROM tracks WHERE user_id = $1 OR artist_id IN 
+             (SELECT id FROM artists WHERE id IN (SELECT artist_id FROM tracks WHERE user_id = $1))`,
+            [req.userId]
+        );
+        
+        // Количество избранных треков
+        const favoritesResult = await pool.query(
+            'SELECT COUNT(*) FROM favorites WHERE user_id = $1',
+            [req.userId]
+        );
+        
+        // Количество плейлистов
+        const playlistsResult = await pool.query(
+            'SELECT COUNT(*) FROM playlists WHERE user_id = $1',
+            [req.userId]
+        );
+        
+        // Количество прослушиваний
+        const playsResult = await pool.query(
+            'SELECT COUNT(*) FROM plays WHERE user_id = $1',
+            [req.userId]
+        );
+        
+        console.log('Stats for user', req.userId, {
+            tracks: tracksResult.rows[0].count,
+            favorites: favoritesResult.rows[0].count,
+            playlists: playlistsResult.rows[0].count,
+            plays: playsResult.rows[0].count
+        });
+        
+        res.json({
+            generatedTracks: parseInt(tracksResult.rows[0].count) || 0,
+            favorites: parseInt(favoritesResult.rows[0].count) || 0,
+            playlists: parseInt(playlistsResult.rows[0].count) || 0,
+            totalPlays: parseInt(playsResult.rows[0].count) || 0
+        });
+    } catch (error) {
+        console.error('Error fetching user stats:', error);
+        res.status(500).json({ error: 'Failed to get user stats' });
+    }
+});
+// Получить предпочтения пользователя
+app.get('/api/user/preferences', requireAuth, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT preferred_genres, preferred_artists, preferred_moods, min_tempo, max_tempo
+            FROM user_preferences
+            WHERE user_id = $1
+        `, [req.userId]);
+        
+        res.json(result.rows[0] || {});
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to get preferences' });
+    }
+});
+
+// Обновить рекомендации (вызывать раз в день)
+app.post('/api/recommendations/refresh', requireAuth, async (req, res) => {
+    // Здесь можно вызвать recommendation-engine асинхронно
+    res.json({ success: true, message: 'Recommendations refresh started' });
+});
+
+// Путь к папке с MP3// Путь к папке с MP3 - ИСПРАВЛЕНО!
+const AUDIO_DIR = path.join(__dirname, 'downloaded_audio');
 
 // Раздаём аудио файлы
 app.get('/audio/:filename', (req, res) => {
     const filename = req.params.filename;
     const filepath = path.join(AUDIO_DIR, filename);
     
+    console.log(`🎵 Запрос аудио: ${filename}`);
+    console.log(`   Путь: ${filepath}`);
+    
     if (!fs.existsSync(filepath)) {
+        console.log(`   ❌ Файл не найден`);
         return res.status(404).json({ error: 'File not found' });
     }
     

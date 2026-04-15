@@ -116,18 +116,19 @@ useEffect(() => {
     audio.removeEventListener('ended', handleEnded);
   };
 }, [isDragging, setProgress, setDuration, nextTrack]);
-  // Handle play/pause
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || !audioReady || !currentTrack?.audioUrl) return;
+// Handle play/pause
+useEffect(() => {
+  const audio = audioRef.current;
+  if (!audio || !audioReady || !currentTrack?.audioUrl) return;
 
-    if (isPlaying) {
-      audio.play().catch(e => console.log("Play error:", e));
-    } else {
-      audio.pause();
-    }
-  }, [isPlaying, audioReady, currentTrack?.audioUrl]);
-
+  if (isPlaying) {
+    audio.play().catch(e => console.log("Play error:", e));
+    // Сохраняем прослушивание при начале воспроизведения
+    savePlay(currentTrack.id);
+  } else {
+    audio.pause();
+  }
+}, [isPlaying, audioReady, currentTrack?.audioUrl]);
   // Handle volume
   useEffect(() => {
     if (audioRef.current) {
@@ -188,6 +189,24 @@ useEffect(() => {
       });
     }
   };
+
+// Добавьте функцию для сохранения прослушивания
+const savePlay = async (trackId: string) => {
+    try {
+        const token = localStorage.getItem('auth_token');
+        await fetch('http://localhost:3001/api/plays', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ trackId })
+        });
+        console.log('✅ Прослушивание сохранено');
+    } catch (error) {
+        console.error('❌ Ошибка сохранения прослушивания:', error);
+    }
+};
 
   const fetchLyrics = async () => {
     if (!currentTrack) return;

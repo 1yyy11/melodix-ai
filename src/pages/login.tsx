@@ -1,73 +1,3 @@
-// import React, { useState } from 'react';
-// import { useLocation } from 'wouter';
-
-// const Login: React.FC = () => {
-//     const [email, setEmail] = useState('');
-//     const [password, setPassword] = useState('');
-//     const [isRegister, setIsRegister] = useState(false);
-//     const [, setLocation] = useLocation();
-
-//     const handleSubmit = async (e: React.FormEvent) => {
-//         e.preventDefault();
-//         const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
-        
-//         try {
-//             const response = await fetch(endpoint, {
-//                 method: 'POST',
-//                 headers: { 'Content-Type': 'application/json' },
-//                 body: JSON.stringify({ email, password })
-//             });
-//             const data = await response.json();
-//             if (data.success) {
-//                 localStorage.setItem('user', JSON.stringify(data.user));
-//                 setLocation('/');
-//             }
-//         } catch (error) {
-//             console.error('Auth error:', error);
-//         }
-//     };
-
-//     return (
-//         <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 to-black">
-//             <form onSubmit={handleSubmit} className="bg-gray-800/50 backdrop-blur-md p-8 rounded-xl w-96 border border-gray-700">
-//                 <h2 className="text-2xl font-bold text-white mb-6 text-center">
-//                     {isRegister ? 'Регистрация' : 'Вход'}
-//                 </h2>
-//                 <input
-//                     type="email"
-//                     placeholder="Email"
-//                     value={email}
-//                     onChange={(e) => setEmail(e.target.value)}
-//                     className="w-full p-3 mb-4 rounded-lg bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-blue-500"
-//                     required
-//                 />
-//                 <input
-//                     type="password"
-//                     placeholder="Пароль"
-//                     value={password}
-//                     onChange={(e) => setPassword(e.target.value)}
-//                     className="w-full p-3 mb-6 rounded-lg bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-blue-500"
-//                     required
-//                 />
-//                 <button type="submit" className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 transition">
-//                     {isRegister ? 'Зарегистрироваться' : 'Войти'}
-//                 </button>
-//                 <p className="text-center text-gray-400 mt-4">
-//                     {isRegister ? 'Уже есть аккаунт?' : 'Нет аккаунта?'}
-//                     <button
-//                         type="button"
-//                         onClick={() => setIsRegister(!isRegister)}
-//                         className="ml-2 text-blue-400 hover:text-blue-300"
-//                     >
-//                         {isRegister ? 'Войти' : 'Зарегистрироваться'}
-//                     </button>
-//                 </p>
-//             </form>
-//         </div>
-//     );
-// };
-
-// export default Login;
 import React, { useState } from 'react';
 import { useLocation } from 'wouter';
 import { useAuth } from '@/contexts/AuthContext';
@@ -96,7 +26,7 @@ const Login: React.FC = () => {
             }
             setLocation('/');
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Authentication failed');
+            setError(err instanceof Error ? err.message : 'Ошибка аутентификации');
         } finally {
             setIsLoading(false);
         }
@@ -106,7 +36,7 @@ const Login: React.FC = () => {
         <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 to-black">
             <form onSubmit={handleSubmit} className="bg-gray-800/50 backdrop-blur-md p-8 rounded-xl w-96 border border-gray-700">
                 <h2 className="text-2xl font-bold text-white mb-6 text-center">
-                    {isRegister ? 'Create Account' : 'Welcome Back'}
+                    {isRegister ? 'Создать аккаунт' : 'Добро пожаловать'}
                 </h2>
                 
                 {error && (
@@ -119,14 +49,14 @@ const Login: React.FC = () => {
                     <>
                         <input
                             type="text"
-                            placeholder="First Name"
+                            placeholder="Имя"
                             value={firstName}
                             onChange={(e) => setFirstName(e.target.value)}
                             className="w-full p-3 mb-4 rounded-lg bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-blue-500"
                         />
                         <input
                             type="text"
-                            placeholder="Last Name"
+                            placeholder="Фамилия"
                             value={lastName}
                             onChange={(e) => setLastName(e.target.value)}
                             className="w-full p-3 mb-4 rounded-lg bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-blue-500"
@@ -145,7 +75,7 @@ const Login: React.FC = () => {
                 />
                 <input
                     type="password"
-                    placeholder="Password (min 6 characters)"
+                    placeholder="Пароль (минимум 6 символов)"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="w-full p-3 mb-6 rounded-lg bg-gray-700 text-white border border-gray-600 focus:outline-none focus:border-blue-500"
@@ -158,11 +88,11 @@ const Login: React.FC = () => {
                     className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
                     disabled={isLoading}
                 >
-                    {isLoading ? 'Loading...' : (isRegister ? 'Sign Up' : 'Sign In')}
+                    {isLoading ? 'Загрузка...' : (isRegister ? 'Зарегистрироваться' : 'Войти')}
                 </button>
                 
                 <p className="text-center text-gray-400 mt-4">
-                    {isRegister ? 'Already have an account?' : "Don't have an account?"}
+                    {isRegister ? 'Уже есть аккаунт?' : 'Нет аккаунта?'}
                     <button
                         type="button"
                         onClick={() => {
@@ -171,7 +101,7 @@ const Login: React.FC = () => {
                         }}
                         className="ml-2 text-blue-400 hover:text-blue-300"
                     >
-                        {isRegister ? 'Sign In' : 'Sign Up'}
+                        {isRegister ? 'Войти' : 'Зарегистрироваться'}
                     </button>
                 </p>
             </form>

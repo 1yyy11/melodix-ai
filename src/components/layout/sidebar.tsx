@@ -23,11 +23,11 @@ export function Sidebar({ className }: SidebarProps) {
   const { user, isAuthenticated, login, logout } = useAuth();
 
   const navItems = [
-    { icon: Home, label: "Home", href: "/" },
-    { icon: Sparkles, label: "Generate", href: "/generate" },
-    { icon: Library, label: "Library", href: "/library", requiresAuth: true },
-    { icon: Heart, label: "Favorites", href: "/favorites", requiresAuth: true },
-    { icon: ListMusic, label: "Playlists", href: "/playlists", requiresAuth: true },
+    { icon: Home, label: "Главная", href: "/" },
+    { icon: Sparkles, label: "Создать", href: "/generate" },
+    { icon: Library, label: "Медиатека", href: "/library", requiresAuth: true },
+    { icon: Heart, label: "Избранное", href: "/favorites", requiresAuth: true },
+    { icon: ListMusic, label: "Плейлисты", href: "/playlists", requiresAuth: true },
   ];
 
   return (
@@ -42,7 +42,7 @@ export function Sidebar({ className }: SidebarProps) {
       </div>
 
       <div className="px-4 py-2">
-        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-4 px-2">Menu</p>
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-4 px-2">Меню</p>
         <nav className="space-y-1">
           {navItems.map((item) => {
             if (item.requiresAuth && !isAuthenticated) return null;
@@ -76,27 +76,27 @@ export function Sidebar({ className }: SidebarProps) {
             )}>
               <div className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center overflow-hidden">
                 {user?.profileImageUrl ? (
-                  <img src={user.profileImageUrl} alt="Avatar" className="w-full h-full object-cover" />
+                  <img src={user.profileImageUrl} alt="Аватар" className="w-full h-full object-cover" />
                 ) : (
                   <User className="w-4 h-4" />
                 )}
               </div>
-              <span className="truncate flex-1">{user?.name || "Profile"}</span>
+              <span className="truncate flex-1">{user?.firstName || user?.email?.split('@')[0] || "Профиль"}</span>
             </Link>
             <button 
               onClick={() => logout()}
               className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 text-muted-foreground hover:bg-destructive/10 hover:text-destructive group font-medium"
             >
               <LogOut className="w-5 h-5 transition-transform duration-200 group-hover:-translate-x-1" />
-              Log out
+              Выйти
             </button>
           </div>
         ) : (
           <div className="space-y-3 bg-secondary/50 p-4 rounded-2xl border border-border/50">
-            <h4 className="font-semibold text-sm">Create to save</h4>
-            <p className="text-xs text-muted-foreground">Sign in to generate and save your AI tracks.</p>
+            <h4 className="font-semibold text-sm">Войдите, чтобы сохранять</h4>
+            <p className="text-xs text-muted-foreground">Войдите, чтобы создавать и сохранять свои треки.</p>
             <Button onClick={() => login()} className="w-full shadow-lg shadow-primary/20 hover:shadow-primary/30 transition-all hover:-translate-y-0.5">
-              Log in
+              Войти
             </Button>
           </div>
         )}

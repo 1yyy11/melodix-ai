@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
 import { Sparkles, ArrowRight, PlayCircle, Headphones, Waves, Music2 } from "lucide-react";
 import { motion } from "framer-motion";
+import { RecommendationsSection } from '@/components/recommendations/recommendations-section';
 
 import { useState, useEffect } from "react";
 import { TrackCard } from "@/components/tracks/track-card";
@@ -54,36 +55,36 @@ export default function Home() {
           >
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/20 text-primary text-sm font-medium backdrop-blur-md">
               <Sparkles className="w-4 h-4" />
-              <span>Next-Gen Music Engine</span>
+              <span>Новое поколение музыки</span>
             </div>
             
             <h1 className="text-5xl md:text-6xl lg:text-7xl font-display font-extrabold leading-[1.1] tracking-tight">
-              Create <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-accent">Music</span> With Your Imagination
+              Создавайте <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-accent">музыку</span> силой воображения
             </h1>
             
             <p className="text-lg md:text-xl text-muted-foreground leading-relaxed max-w-xl">
-              Describe your vibe, choose a genre, and let our AI generate professional-quality tracks in seconds.
+              Опишите своё настроение, выберите жанр, и наш ИИ создаст профессиональные треки за секунды.
             </p>
             
             <div className="flex flex-wrap items-center gap-4 pt-4">
               {isAuthenticated ? (
                 <Link href="/generate" className="inline-block">
                   <Button size="lg" className="h-14 px-8 rounded-full text-lg shadow-lg shadow-primary/25 hover:shadow-xl transition-all hover:-translate-y-1">
-                    Start Generating
+                    Начать создавать
                     <ArrowRight className="w-5 h-5 ml-2" />
                   </Button>
                 </Link>
               ) : (
                 <Link href="/login">
                   <Button size="lg" className="h-14 px-8 rounded-full text-lg shadow-lg shadow-primary/25 hover:shadow-xl transition-all hover:-translate-y-1">
-                    Sign in to Create
+                    Войдите, чтобы создать
                     <ArrowRight className="w-5 h-5 ml-2" />
                   </Button>
                 </Link>
               )}
               <Button size="lg" variant="outline" className="h-14 px-8 rounded-full text-lg backdrop-blur-sm bg-background/50">
                 <PlayCircle className="w-5 h-5 mr-2" />
-                Listen to Examples
+                Слушать примеры
               </Button>
             </div>
           </motion.div>
@@ -96,8 +97,8 @@ export default function Home() {
               <Waves className="w-6 h-6 text-primary" />
             </div>
             <div>
-              <h3 className="font-bold text-lg">Studio Quality</h3>
-              <p className="text-muted-foreground text-sm mt-1">Export in WAV or high-bitrate MP3 for professional use.</p>
+              <h3 className="font-bold text-lg">Студийное качество</h3>
+              <p className="text-muted-foreground text-sm mt-1">Экспорт в WAV или высококачественный MP3 для профессионального использования.</p>
             </div>
           </div>
           <div className="glass-card rounded-2xl p-6 flex items-start gap-4 hover:-translate-y-1 transition-transform">
@@ -105,8 +106,8 @@ export default function Home() {
               <Sparkles className="w-6 h-6 text-accent" />
             </div>
             <div>
-              <h3 className="font-bold text-lg">Infinite Stems</h3>
-              <p className="text-muted-foreground text-sm mt-1">Generate complete tracks or isolated stems for mixing.</p>
+              <h3 className="font-bold text-lg">Бесконечные треки</h3>
+              <p className="text-muted-foreground text-sm mt-1">Создавайте полные треки или изолированные дорожки для микширования.</p>
             </div>
           </div>
           <div className="glass-card rounded-2xl p-6 flex items-start gap-4 hover:-translate-y-1 transition-transform">
@@ -114,8 +115,8 @@ export default function Home() {
               <Headphones className="w-6 h-6 text-blue-400" />
             </div>
             <div>
-              <h3 className="font-bold text-lg">Royalty Free</h3>
-              <p className="text-muted-foreground text-sm mt-1">Use your generated tracks anywhere, 100% royalty-free.</p>
+              <h3 className="font-bold text-lg">Без роялти</h3>
+              <p className="text-muted-foreground text-sm mt-1">Используйте созданные треки где угодно, 100% без отчислений.</p>
             </div>
           </div>
         </section>
@@ -124,12 +125,12 @@ export default function Home() {
         <section className="space-y-6">
           <div className="flex items-end justify-between">
             <div>
-              <h2 className="text-3xl font-display font-bold">Recent Tracks</h2>
-              <p className="text-muted-foreground mt-1">Recently added tracks</p>
+              <h2 className="text-3xl font-display font-bold">Недавние треки</h2>
+              <p className="text-muted-foreground mt-1">Недавно добавленные треки</p>
             </div>
             {isAuthenticated && (
               <Link href="/library" className="text-primary hover:underline font-medium text-sm">
-                View all library
+                Всю медиатеку
               </Link>
             )}
           </div>
@@ -151,15 +152,22 @@ export default function Home() {
               <div className="w-20 h-20 bg-secondary rounded-full flex items-center justify-center mb-4">
                 <Music2 className="w-8 h-8 text-muted-foreground" />
               </div>
-              <h3 className="text-xl font-bold mb-2">No tracks yet</h3>
-              <p className="text-muted-foreground mb-6">Generate your first track to start building your library.</p>
+              <h3 className="text-xl font-bold mb-2">Пока нет треков</h3>
+              <p className="text-muted-foreground mb-6">Создайте свой первый трек, чтобы начать собирать библиотеку.</p>
               <Link href="/generate">
-                <Button>Go to Generator</Button>
+                <Button>Перейти к генератору</Button>
               </Link>
             </div>
           )}
         </section>
-
+        {/* ========== ВСТАВИТЬ СЮДА ========== */}
+        {/* Секция персональных рекомендаций */}
+        {isAuthenticated && (
+          <section className="space-y-6">
+            <RecommendationsSection />
+          </section>
+        )}
+        {/* ================================= */}
       </div>
     </Layout>
   );

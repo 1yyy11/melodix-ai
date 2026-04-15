@@ -41,10 +41,10 @@ export default function Library() {
       <Layout>
         <div className="h-[80vh] flex flex-col items-center justify-center text-center max-w-md mx-auto">
           <LibraryIcon className="w-24 h-24 text-muted-foreground/30 mb-6" />
-          <h1 className="text-3xl font-display font-bold mb-4">Your Music Library</h1>
-          <p className="text-muted-foreground mb-8">Sign in to access your generated tracks, organized exactly how you like them.</p>
+          <h1 className="text-3xl font-display font-bold mb-4">Ваша медиатека</h1>
+          <p className="text-muted-foreground mb-8">Войдите, чтобы получить доступ к вашим трекам.</p>
           <Link href="/login">
-            <Button size="lg" className="rounded-full px-8">Sign In</Button>
+            <Button size="lg" className="rounded-full px-8">Войти</Button>
           </Link>
         </div>
       </Layout>
@@ -58,16 +58,16 @@ export default function Library() {
           <div>
             <h1 className="text-4xl font-display font-bold flex items-center gap-3">
               <LibraryIcon className="w-8 h-8 text-primary" />
-              Library
+              Медиатека
             </h1>
-            <p className="text-muted-foreground mt-2">All your generated tracks in one place.</p>
+            <p className="text-muted-foreground mt-2">Все ваши треки в одном месте.</p>
           </div>
           
           <div className="flex items-center gap-3 w-full md:w-auto">
             <div className="relative w-full md:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input 
-                placeholder="Search tracks..." 
+                placeholder="Поиск треков..." 
                 className="pl-9 bg-card border-border/50 focus:border-primary"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -87,10 +87,10 @@ export default function Library() {
           </div>
         ) : filteredTracks.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center glass-card rounded-3xl">
-            <h3 className="text-2xl font-bold mb-2">It's quiet in here</h3>
-            <p className="text-muted-foreground max-w-md mx-auto mb-8">You haven't generated any tracks yet. Head over to the studio and let the AI do its magic.</p>
+            <h3 className="text-2xl font-bold mb-2">Здесь пока тихо</h3>
+            <p className="text-muted-foreground max-w-md mx-auto mb-8">Вы ещё не сгенерировали ни одного трека. Перейдите в студию и позвольте AI сделать своё дело.</p>
             <Link href="/generate">
-              <Button size="lg" className="rounded-full shadow-lg shadow-primary/20">Go to Studio</Button>
+              <Button size="lg" className="rounded-full shadow-lg shadow-primary/20">Перейти в студию</Button>
             </Link>
           </div>
         ) : (

@@ -19,6 +19,42 @@ const GENRES = ["Electronic", "Pop", "Rock", "Hip-hop", "Classical", "Ambient", 
 const MOODS = ["Happy", "Sad", "Energetic", "Calm", "Dramatic", "Mysterious", "Aggressive", "Chill"];
 const INSTRUMENTS = ["Synthesizer", "Piano", "Electric Guitar", "Acoustic Guitar", "Drums", "Bass", "Strings", "Vocals"];
 
+// Переводы для жанров
+const GENRES_RU: Record<string, string> = {
+  "Electronic": "Электроника",
+  "Pop": "Поп",
+  "Rock": "Рок",
+  "Hip-hop": "Хип-хоп",
+  "Classical": "Классика",
+  "Ambient": "Эмбиент",
+  "Jazz": "Джаз",
+  "Lo-Fi": "Lo-Fi"
+};
+
+// Переводы для настроений
+const MOODS_RU: Record<string, string> = {
+  "Happy": "Счастливое",
+  "Sad": "Грустное",
+  "Energetic": "Энергичное",
+  "Calm": "Спокойное",
+  "Dramatic": "Драматичное",
+  "Mysterious": "Таинственное",
+  "Aggressive": "Агрессивное",
+  "Chill": "Расслабленное"
+};
+
+// Переводы для инструментов
+const INSTRUMENTS_RU: Record<string, string> = {
+  "Synthesizer": "Синтезатор",
+  "Piano": "Пианино",
+  "Electric Guitar": "Электрогитара",
+  "Acoustic Guitar": "Акустическая гитара",
+  "Drums": "Ударные",
+  "Bass": "Бас",
+  "Strings": "Струнные",
+  "Vocals": "Вокал"
+};
+
 export default function Generate() {
   const { toast } = useToast();
   const { playTrack } = usePlayer();
@@ -38,13 +74,13 @@ export default function Generate() {
 
   const handleGenerate = () => {
     if (!isAuthenticated) {
-      toast({ title: "Authentication required", description: "Please sign in to generate music." });
+      toast({ title: "Требуется авторизация", description: "Пожалуйста, войдите для генерации музыки." });
       login();
       return;
     }
 
     if (!form.prompt?.trim() && !form.genre) {
-      toast({ title: "Input needed", description: "Please provide a prompt or select a genre.", variant: "destructive" });
+      toast({ title: "Необходим ввод", description: "Пожалуйста, укажите описание или выберите жанр.", variant: "destructive" });
       return;
     }
 
@@ -52,10 +88,10 @@ export default function Generate() {
     generateMutation.mutate({ data: form }, {
       onSuccess: (data) => {
         setGeneratedTrack(data.track);
-        toast({ title: "Track generated!", description: "Your new track is ready to play." });
+        toast({ title: "Трек создан!", description: "Ваш новый трек готов к воспроизведению." });
       },
       onError: (err) => {
-        toast({ title: "Generation failed", description: err.message, variant: "destructive" });
+        toast({ title: "Ошибка генерации", description: err.message, variant: "destructive" });
       }
     });
   };
@@ -78,18 +114,18 @@ export default function Generate() {
           <div>
             <h1 className="text-4xl font-display font-bold flex items-center gap-3">
               <Sparkles className="w-8 h-8 text-primary" />
-              Studio Generator
+              Генератор
             </h1>
-            <p className="text-muted-foreground mt-2 text-lg">Define parameters and let our AI compose your track.</p>
+            <p className="text-muted-foreground mt-2 text-lg">Задайте параметры, и ИИ создаст ваш трек.</p>
           </div>
 
           <div className="glass-card p-6 md:p-8 rounded-3xl space-y-8">
             
             {/* Prompt */}
             <div className="space-y-3">
-              <Label className="text-base font-semibold">Creative Prompt (Optional)</Label>
+              <Label className="text-base font-semibold">Творческое описание (необязательно)</Label>
               <Textarea 
-                placeholder="E.g., A cyberpunk chase scene through a neon-lit city in the rain..."
+                placeholder="Например: Сцена погони в киберпанк-стиле под дождём в неоновом городе..."
                 className="resize-none h-24 bg-background border-border/50 focus:border-primary focus:ring-primary/20 text-base"
                 value={form.prompt}
                 onChange={(e) => setForm({ ...form, prompt: e.target.value })}
@@ -99,26 +135,26 @@ export default function Generate() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Genre */}
               <div className="space-y-3">
-                <Label className="text-base font-semibold">Genre</Label>
+                <Label className="text-base font-semibold">Жанр</Label>
                 <Select value={form.genre} onValueChange={(v) => setForm({ ...form, genre: v })}>
                   <SelectTrigger className="h-12 bg-background border-border/50">
-                    <SelectValue placeholder="Select genre" />
+                    <SelectValue placeholder="Выберите жанр" />
                   </SelectTrigger>
                   <SelectContent>
-                    {GENRES.map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}
+                    {GENRES.map(g => <SelectItem key={g} value={g}>{GENRES_RU[g] || g}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
 
               {/* Mood */}
               <div className="space-y-3">
-                <Label className="text-base font-semibold">Mood</Label>
+                <Label className="text-base font-semibold">Настроение</Label>
                 <Select value={form.mood} onValueChange={(v) => setForm({ ...form, mood: v })}>
                   <SelectTrigger className="h-12 bg-background border-border/50">
-                    <SelectValue placeholder="Select mood" />
+                    <SelectValue placeholder="Выберите настроение" />
                   </SelectTrigger>
                   <SelectContent>
-                    {MOODS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                    {MOODS.map(m => <SelectItem key={m} value={m}>{MOODS_RU[m] || m}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -129,7 +165,7 @@ export default function Generate() {
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <Label className="text-base font-semibold flex items-center gap-2">
-                    <Settings2 className="w-4 h-4 text-primary" /> Tempo (BPM)
+                    <Settings2 className="w-4 h-4 text-primary" /> Темп (BPM)
                   </Label>
                   <span className="font-mono text-sm bg-secondary px-2 py-1 rounded-md">{form.tempo}</span>
                 </div>
@@ -144,9 +180,9 @@ export default function Generate() {
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <Label className="text-base font-semibold flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-primary" /> Duration
+                    <Clock className="w-4 h-4 text-primary" /> Длительность
                   </Label>
-                  <span className="font-mono text-sm bg-secondary px-2 py-1 rounded-md">{form.duration}s</span>
+                  <span className="font-mono text-sm bg-secondary px-2 py-1 rounded-md">{form.duration} сек</span>
                 </div>
                 <Slider 
                   min={10} max={300} step={10} 
@@ -159,7 +195,7 @@ export default function Generate() {
 
             {/* Instruments */}
             <div className="space-y-4 pt-2">
-              <Label className="text-base font-semibold">Featured Instruments</Label>
+              <Label className="text-base font-semibold">Инструменты</Label>
               <div className="flex flex-wrap gap-2">
                 {INSTRUMENTS.map(inst => (
                   <button
@@ -171,7 +207,7 @@ export default function Generate() {
                         : 'bg-background border-border/50 text-muted-foreground hover:border-border hover:bg-secondary'
                     }`}
                   >
-                    {inst}
+                    {INSTRUMENTS_RU[inst] || inst}
                   </button>
                 ))}
               </div>
@@ -184,11 +220,11 @@ export default function Generate() {
             >
               {generateMutation.isPending ? (
                 <span className="flex items-center gap-2 animate-pulse">
-                  <Wand2 className="w-5 h-5 animate-spin" /> Synthesizing Audio...
+                  <Wand2 className="w-5 h-5 animate-spin" /> Создание аудио...
                 </span>
               ) : (
                 <span className="flex items-center gap-2">
-                  <Sparkles className="w-5 h-5" /> Generate Track
+                  <Sparkles className="w-5 h-5" /> Создать трек
                 </span>
               )}
             </Button>
@@ -198,7 +234,7 @@ export default function Generate() {
         {/* Right Column - Results */}
         <div className="w-full lg:w-96 shrink-0 flex flex-col">
           <div className="sticky top-28 space-y-6">
-            <h3 className="font-display font-bold text-2xl">Result</h3>
+            <h3 className="font-display font-bold text-2xl">Результат</h3>
             
             <div className="glass-card rounded-3xl p-6 min-h-[400px] flex flex-col items-center justify-center text-center relative overflow-hidden border border-border/50">
               
@@ -211,8 +247,8 @@ export default function Generate() {
                   >
                     <div className="w-24 h-24 rounded-full border-4 border-primary/20 border-t-primary animate-spin"></div>
                     <div className="space-y-2">
-                      <p className="font-bold text-lg animate-pulse">Composing melodies...</p>
-                      <p className="text-sm text-muted-foreground">Applying {form.genre} style with {form.mood} vibes</p>
+                      <p className="font-bold text-lg animate-pulse">Создание мелодии...</p>
+                      <p className="text-sm text-muted-foreground">Применяю стиль {GENRES_RU[form.genre] || form.genre} с {MOODS_RU[form.mood]?.toLowerCase() || form.mood} настроением</p>
                     </div>
                   </motion.div>
                 ) : generatedTrack ? (
@@ -223,7 +259,7 @@ export default function Generate() {
                   >
                     <div className="w-full aspect-square rounded-2xl bg-secondary mb-6 shadow-2xl relative group overflow-hidden border border-border/50">
                       {generatedTrack.coverUrl ? (
-                        <img src={generatedTrack.coverUrl} alt="Cover" className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+                        <img src={generatedTrack.coverUrl} alt="Обложка" className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
                       ) : (
                         <div className="w-full h-full bg-gradient-to-br from-primary/30 to-accent/30 flex items-center justify-center">
                           <Music4 className="w-16 h-16 text-primary/50" />
@@ -236,11 +272,11 @@ export default function Generate() {
                       </div>
                     </div>
                     <h4 className="font-bold text-xl text-foreground mb-1 w-full truncate">{generatedTrack.title}</h4>
-                    <p className="text-primary text-sm font-medium w-full truncate">{generatedTrack.genre} • {generatedTrack.mood}</p>
+                    <p className="text-primary text-sm font-medium w-full truncate">{GENRES_RU[generatedTrack.genre] || generatedTrack.genre} • {MOODS_RU[generatedTrack.mood] || generatedTrack.mood}</p>
                     
                     <div className="flex gap-3 mt-6 w-full">
-                      <Button className="flex-1 rounded-xl" onClick={() => playTrack(generatedTrack)}>Play Now</Button>
-                      <Button variant="outline" className="flex-1 rounded-xl">Save to Library</Button>
+                      <Button className="flex-1 rounded-xl" onClick={() => playTrack(generatedTrack)}>Воспроизвести</Button>
+                      <Button variant="outline" className="flex-1 rounded-xl">Сохранить</Button>
                     </div>
                   </motion.div>
                 ) : (
@@ -252,7 +288,7 @@ export default function Generate() {
                     <div className="w-20 h-20 rounded-2xl bg-secondary/50 flex items-center justify-center mb-4 rotate-12">
                       <Music4 className="w-10 h-10 text-muted-foreground/50 -rotate-12" />
                     </div>
-                    <p className="max-w-[200px]">Your generated masterpiece will appear here.</p>
+                    <p className="max-w-[200px]">Здесь появится ваш сгенерированный трек.</p>
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -272,5 +308,5 @@ export default function Generate() {
 
 // Utility component used above
 function Clock({ className }: { className?: string }) {
-  return <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinelinejoin="round" className={className}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+  return <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
 }
