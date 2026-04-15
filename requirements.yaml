@@ -1,0 +1,20 @@
+packages:
+  "framer-motion": "For smooth page transitions and interactive element animations"
+  "zustand": "For global audio player state management across all components"
+  "date-fns": "For formatting track durations and creation dates"
+
+images:
+  - path: "artifacts/melodix-ai/public/images/hero-bg.png"
+    description: "Abstract fluid gradient mesh in deep dark background with vibrant neon pink and magenta light leaks, glowing atmospheric mood, 3d render style, high resolution, dark mode music theme"
+    aspect_ratio: "16:9"
+  - path: "artifacts/melodix-ai/public/images/auth-bg.png"
+    description: "Dark moody studio setting with a subtle neon pink glow on a modern synthesizer or mixing console, depth of field, cinematic lighting"
+    aspect_ratio: "16:9"
+  - path: "artifacts/melodix-ai/public/images/empty-library.png"
+    description: "Minimalist 3D illustration of floating vinyl records and musical notes in a dark space with a soft pink spotlight, modern abstract style"
+    aspect_ratio: "1:1"
+
+notes:
+  - API hooks are imported from @workspace/api-client-react as specified
+  - Auth uses @workspace/replit-auth-web
+  - App defaults to a sleek dark mode design with pink accents
