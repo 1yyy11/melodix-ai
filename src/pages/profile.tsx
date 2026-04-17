@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react"; // ← добавлен useRef
 import { Layout } from "@/components/layout";
 import { useAuth } from "@/contexts/AuthContext";
-import { User, Activity, Music2, ListMusic, Heart, Loader2, Edit2, Save, X } from "lucide-react";
+import { User, Activity, Music2, ListMusic, Heart, Loader2, Edit2, Save, X, Camera, Trash2 } from "lucide-react";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,8 @@ interface UserStats {
 export default function Profile() {
     const { user, token, isAuthenticated, logout, updateProfile } = useAuth();
     const { toast } = useToast();
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    
     const [stats, setStats] = useState<UserStats>({
         generatedTracks: 0,
         favorites: 0,
@@ -35,12 +37,66 @@ export default function Profile() {
     const [firstName, setFirstName] = useState(user?.firstName || '');
     const [lastName, setLastName] = useState(user?.lastName || '');
     const [isSaving, setIsSaving] = useState(false);
+      const [uploadingAvatar, setUploadingAvatar] = useState(false);
+    const [avatarPreview, setAvatarPreview] = useState(user?.profileImageUrl || '');
 
     useEffect(() => {
         if (isAuthenticated && token) {
             fetchUserStats();
         }
     }, [isAuthenticated, token]);
+
+    const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        
+        // Проверка типа и размера
+        if (!file.type.startsWith('image/')) {
+            toast({ title: "Ошибка", description: "Можно загружать только изображения", variant: "destructive" });
+            return;
+        }
+        if (file.size > 5 * 1024 * 1024) {
+            toast({ title: "Ошибка", description: "Размер файла не должен превышать 5 МБ", variant: "destructive" });
+            return;
+        }
+
+           setUploadingAvatar(true);
+        const formData = new FormData();
+        formData.append('avatar', file);
+        
+        try {
+            const response = await fetch('http://localhost:3001/api/user/avatar', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` },
+                body: formData
+            });
+            if (!response.ok) throw new Error('Upload failed');
+            const data = await response.json();
+            setAvatarPreview(data.avatarUrl);
+            // Обновляем пользователя в контексте (можно перезагрузить)
+            if (updateProfile) await updateProfile({ profileImageUrl: data.avatarUrl });
+            toast({ title: "Успех", description: "Аватар обновлён" });
+        } catch (error) {
+            toast({ title: "Ошибка", description: "Не удалось загрузить аватар", variant: "destructive" });
+        } finally {
+            setUploadingAvatar(false);
+        }
+    };
+    
+    const handleDeleteAvatar = async () => {
+        try {
+            const response = await fetch('http://localhost:3001/api/user/avatar', {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!response.ok) throw new Error('Delete failed');
+            setAvatarPreview('');
+            if (updateProfile) await updateProfile({ profileImageUrl: '' });
+            toast({ title: "Успех", description: "Аватар удалён" });
+        } catch (error) {
+            toast({ title: "Ошибка", description: "Не удалось удалить аватар", variant: "destructive" });
+        }
+    };
 
     const fetchUserStats = async () => {
         setIsLoading(true);
@@ -165,17 +221,51 @@ export default function Profile() {
                 
                 {/* Header */}
                 <div className="glass-card rounded-3xl p-8 md:p-12 flex flex-col md:flex-row items-center md:items-start gap-8 relative overflow-hidden">
-                    <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-r from-primary/20 via-accent/10 to-background z-0"></div>
-                    
-                    <div className="relative z-10 w-32 h-32 md:w-40 md:h-40 rounded-full bg-secondary border-4 border-background overflow-hidden shrink-0 shadow-2xl">
-                        {user?.profileImageUrl ? (
-                            <img src={user.profileImageUrl} alt="Avatar" className="w-full h-full object-cover" />
+                   
+                         {/* Аватар с возможностью загрузки */}
+                    <div className="relative z-10 w-32 h-32 md:w-40 md:h-40 rounded-full bg-secondary border-4 border-background overflow-hidden shrink-0 shadow-2xl group">
+                        {avatarPreview ? (
+                            <img src={avatarPreview} alt="Avatar" className="w-full h-full object-cover" />
                         ) : (
                             <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary/40 to-accent/40">
                                 <User className="w-16 h-16 text-white/80" />
                             </div>
                         )}
+                         <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                className="p-2 rounded-full bg-white/20 hover:bg-white/30"
+                                disabled={uploadingAvatar}
+                            >
+                                <Camera className="w-6 h-6 text-white" />
+                            </button>
+                            {avatarPreview && (
+                                <button
+                                    onClick={handleDeleteAvatar}
+                                    className="p-2 rounded-full bg-white/20 hover:bg-white/30 ml-2"
+                                >
+                                    <Trash2 className="w-6 h-6 text-white" />
+                                </button>
+                            )}
+                        </div>
+                        <input
+                            type="file"
+                            ref={fileInputRef}
+                            className="hidden"
+                            accept="image/*"
+                            onChange={handleAvatarUpload}
+                            disabled={uploadingAvatar}
+                        />
+                        {uploadingAvatar && (
+                            <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                                <Loader2 className="w-8 h-8 animate-spin text-white" />
+                            </div>
+                        )}
                     </div>
+                   
+                    <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-r from-primary/20 via-accent/10 to-background z-0"></div>
+                    
+                  
                     
                     <div className="relative z-10 text-center md:text-left flex-1 mt-2">
                         {isEditing ? (

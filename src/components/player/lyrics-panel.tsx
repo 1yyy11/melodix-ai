@@ -3,6 +3,21 @@ import { X, Music2, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLyrics } from "@/contexts/LyricsContext";
 
+function decodeHtmlEntities(text: string) {
+    const entities: Record<string, string> = {
+        '&amp;': '&',
+        '&lt;': '<',
+        '&gt;': '>',
+        '&quot;': '"',
+        '&#39;': "'",
+        '&#x27;': "'",
+        '&#x2F;': '/',
+        '&#x60;': '`',
+        '&#x3D;': '='
+    };
+    return text.replace(/&(?:amp|lt|gt|quot|#39|#x27|#x2F|#x60|#x3D);/g, match => entities[match] || match);
+}
+
 interface LyricsPanelProps {
   currentTrack: {
     id: string;
@@ -164,7 +179,7 @@ export function LyricsPanel({ currentTrack, isPlaying, currentTime = 0 }: Lyrics
 
   return (
     <>
-      {/* Панель с текстом - БЕЗ затемнения фона */}
+      {/* Панель с текстом */}
       <div className="fixed top-0 right-0 h-full w-full sm:w-[500px] bg-gradient-to-b from-gray-900 to-black shadow-2xl z-50 flex flex-col animate-slideIn">
         {/* Заголовок */}
         <div className="sticky top-0 bg-gray-900/95 backdrop-blur-sm border-b border-gray-700 p-5 flex justify-between items-center">
@@ -217,7 +232,7 @@ export function LyricsPanel({ currentTrack, isPlaying, currentTime = 0 }: Lyrics
                       : "text-gray-400 text-base hover:text-gray-300"
                   )}
                 >
-                  {line.text}
+                  {decodeHtmlEntities(line.text)}
                 </div>
               ))}
             </div>
@@ -225,7 +240,7 @@ export function LyricsPanel({ currentTrack, isPlaying, currentTime = 0 }: Lyrics
             <div className="text-gray-300 text-base leading-loose whitespace-pre-wrap break-words font-mono">
               {lyrics.split('\n').map((line, i) => (
                 <p key={i} className="mb-2 hover:text-primary transition-colors">
-                  {line || '\u00A0'}
+                  {decodeHtmlEntities(line) || '\u00A0'}
                 </p>
               ))}
             </div>

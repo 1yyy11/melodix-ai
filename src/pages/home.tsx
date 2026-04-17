@@ -82,10 +82,12 @@ export default function Home() {
                   </Button>
                 </Link>
               )}
+                 <Link href="/library">
               <Button size="lg" variant="outline" className="h-14 px-8 rounded-full text-lg backdrop-blur-sm bg-background/50">
                 <PlayCircle className="w-5 h-5 mr-2" />
                 Слушать примеры
               </Button>
+                 </Link>
             </div>
           </motion.div>
         </section>

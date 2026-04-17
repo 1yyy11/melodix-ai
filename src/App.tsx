@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import ListeningHistory from "@/pages/listening-history";
 
 // Pages
 import Home from "@/pages/home";
@@ -40,6 +41,11 @@ function Router() {
           <Generate />
         </ProtectedRoute>
       </Route>
+      <Route path="/history">
+    <ProtectedRoute>
+        <ListeningHistory />
+    </ProtectedRoute>
+</Route>
       <Route path="/library">
         <ProtectedRoute>
           <Library />

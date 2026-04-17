@@ -1,6 +1,6 @@
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useState, useEffect } from "react";
 import { TrackCard } from "@/components/tracks/track-card";
@@ -8,21 +8,30 @@ import { Library as LibraryIcon, Search, SlidersHorizontal } from "lucide-react"
 import { Input } from "@/components/ui/input";
 
 export default function Library() {
+  const [location, setLocation] = useLocation();
   const { isAuthenticated } = useAuth();
+
   const [search, setSearch] = useState("");
   const [tracks, setTracks] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Синхронизация поискового запроса с параметром URL
+  useEffect(() => {
+    const params = new URLSearchParams(location.split("?")[1] || "");
+    const searchParam = params.get("search") || "";
+    setSearch(searchParam);
+  }, [location]);
+
   useEffect(() => {
     if (isAuthenticated) {
-      fetch('/api/tracks')
-        .then(res => res.json())
-        .then(data => {
+      fetch("/api/tracks")
+        .then((res) => res.json())
+        .then((data) => {
           setTracks(Array.isArray(data) ? data : []);
           setIsLoading(false);
         })
-        .catch(err => {
-          console.error('Error loading tracks:', err);
+        .catch((err) => {
+          console.error("Error loading tracks:", err);
           setIsLoading(false);
         });
     } else {
@@ -30,10 +39,18 @@ export default function Library() {
     }
   }, [isAuthenticated]);
 
-  // Фильтрация треков по поиску
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newSearch = e.target.value;
+    setSearch(newSearch);
+    const params = new URLSearchParams();
+    if (newSearch) params.set("search", newSearch);
+    setLocation(`/library${params.toString() ? `?${params.toString()}` : ""}`, { replace: true });
+  };
+
   const filteredTracks = tracks.filter((track: any) =>
     track.title?.toLowerCase().includes(search.toLowerCase()) ||
-    track.genre?.toLowerCase().includes(search.toLowerCase())
+    track.genre?.toLowerCase().includes(search.toLowerCase()) ||
+    track.artist_name?.toLowerCase().includes(search.toLowerCase())
   );
 
   if (!isAuthenticated) {
@@ -62,15 +79,15 @@ export default function Library() {
             </h1>
             <p className="text-muted-foreground mt-2">Все ваши треки в одном месте.</p>
           </div>
-          
+
           <div className="flex items-center gap-3 w-full md:w-auto">
             <div className="relative w-full md:w-64">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input 
-                placeholder="Поиск треков..." 
+              <Input
+                placeholder="Поиск треков..."
                 className="pl-9 bg-card border-border/50 focus:border-primary"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={handleSearchChange}
               />
             </div>
             <Button variant="outline" size="icon" className="shrink-0 bg-card border-border/50">
@@ -81,16 +98,20 @@ export default function Library() {
 
         {isLoading ? (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-            {[1,2,3,4,5,6,7,8].map(i => (
-              <div key={i} className="bg-card rounded-2xl p-4 animate-pulse h-64 border border-border/50"></div>
+            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+              <div key={i} className="bg-card rounded-2xl p-4 animate-pulse h-64 border border-border/50" />
             ))}
           </div>
         ) : filteredTracks.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center glass-card rounded-3xl">
             <h3 className="text-2xl font-bold mb-2">Здесь пока тихо</h3>
-            <p className="text-muted-foreground max-w-md mx-auto mb-8">Вы ещё не сгенерировали ни одного трека. Перейдите в студию и позвольте AI сделать своё дело.</p>
+            <p className="text-muted-foreground max-w-md mx-auto mb-8">
+              Вы ещё не сгенерировали ни одного трека. Перейдите в студию и позвольте AI сделать своё дело.
+            </p>
             <Link href="/generate">
-              <Button size="lg" className="rounded-full shadow-lg shadow-primary/20">Перейти в студию</Button>
+              <Button size="lg" className="rounded-full shadow-lg shadow-primary/20">
+                Перейти в студию
+              </Button>
             </Link>
           </div>
         ) : (

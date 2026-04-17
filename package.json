@@ -87,6 +87,7 @@
     "jsonwebtoken": "^9.0.3",
     "lrc-kit": "^1.2.1",
     "lyrics-finder": "^21.7.0",
+    "multer": "^2.1.1",
     "pg": "^8.20.0",
     "play-dl": "^1.9.7",
     "yt-dlp-wrap": "^2.3.12",

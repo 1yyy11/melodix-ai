@@ -17,17 +17,20 @@ import { useAuth } from "@/contexts/AuthContext";
 interface SidebarProps {
   className?: string;
 }
+import { History } from "lucide-react";
 
 export function Sidebar({ className }: SidebarProps) {
   const [location] = useLocation();
   const { user, isAuthenticated, login, logout } = useAuth();
 
   const navItems = [
+   
     { icon: Home, label: "Главная", href: "/" },
     { icon: Sparkles, label: "Создать", href: "/generate" },
     { icon: Library, label: "Медиатека", href: "/library", requiresAuth: true },
     { icon: Heart, label: "Избранное", href: "/favorites", requiresAuth: true },
     { icon: ListMusic, label: "Плейлисты", href: "/playlists", requiresAuth: true },
+    { icon: History, label: "История", href: "/history", requiresAuth: true },
   ];
 
   return (

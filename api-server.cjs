@@ -9,7 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const axios = require('axios');
 const cheerio = require('cheerio');
-
+const multer = require('multer');
 const GENIUS_ACCESS_TOKEN = '0yMlIu83IbruTlz6GvVv6jIndVTIXSWfLf4I8ET0riafRW9IE5BU0ROfE7jL5Llc';
 const app = express();
 const port = process.env.PORT || 3001;
@@ -487,25 +487,36 @@ app.get('/api/lyrics', async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-
-// Альтернативный эндпоинт для текстов (совместимость)
 app.get('/api/lyrics-lrc', async (req, res) => {
     const { artist, title } = req.query;
     console.log(`🎤 Запрос текста (lrc): ${artist} - ${title}`);
-    
+
+    // 1. Пробуем LRCLIB
+    try {
+        const lrcRes = await axios.get(`https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`);
+        if (lrcRes.data?.syncedLyrics) {
+            // У LRCLIB есть синхронизированный текст — отлично!
+            return res.json({ syncedLyrics: lrcRes.data.syncedLyrics });
+        }
+    } catch (lrclibError) {
+        // LRCLIB вернул ошибку (например, 404). Логируем и идём дальше.
+        console.log(`⚠️ LRCLIB не нашёл текст для ${artist} - ${title}: ${lrclibError.message}`);
+        // Здесь специально НЕ делаем return, чтобы перейти к следующему шагу.
+    }
+
+    // 2. Если LRCLIB не помог, пробуем Genius API
     try {
         const lyrics = await getLyricsFromGenius(artist, title);
-        
         if (lyrics) {
-            res.json({ plainLyrics: lyrics });
+            // У Genius есть обычный текст
+            return res.json({ plainLyrics: lyrics });
         } else {
-            // Fallback текст
-            const fallbackText = `Текст песни "${title}"\nИсполнитель: ${artist}\n\nК сожалению, текст не найден.\nПопробуйте поискать на Genius.com`;
-            res.json({ plainLyrics: fallbackText });
+            // Genius тоже ничего не нашёл
+            return res.json({ plainLyrics: `Текст песни "${title}"\nИсполнитель: ${artist}\n\nК сожалению, текст не найден.` });
         }
-    } catch (error) {
-        console.error('Ошибка:', error);
-        res.json({ plainLyrics: `Ошибка загрузки текста: ${error.message}` });
+    } catch (geniusError) {
+        console.error(`❌ Ошибка при запросе к Genius: ${geniusError.message}`);
+        return res.status(500).json({ error: 'Не удалось загрузить текст ни из одного источника.' });
     }
 });
 
@@ -661,40 +672,7 @@ app.get('/api/playlists/:playlistId', requireAuth, async (req, res) => {
     }
 });
 
-// Добавить трек в плейлист
-app.post('/api/playlists/:playlistId/tracks', requireAuth, async (req, res) => {
-    const { playlistId } = req.params;
-    const { trackId } = req.body;
-    
-    try {
-        const playlistCheck = await pool.query(
-            'SELECT id FROM playlists WHERE id = $1 AND user_id = $2',
-            [playlistId, req.userId]
-        );
-        
-        if (playlistCheck.rows.length === 0) {
-            return res.status(404).json({ error: 'Playlist not found' });
-        }
-        
-        const positionResult = await pool.query(
-            'SELECT COALESCE(MAX(position), -1) + 1 as next_pos FROM playlist_tracks WHERE playlist_id = $1',
-            [playlistId]
-        );
-        const nextPosition = positionResult.rows[0].next_pos;
-        
-        await pool.query(
-            `INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) 
-             VALUES ($1, $2, $3, NOW()) 
-             ON CONFLICT (playlist_id, track_id) DO NOTHING`,
-            [playlistId, trackId, nextPosition]
-        );
-        
-        res.json({ success: true });
-    } catch (error) {
-        console.error('Error adding to playlist:', error);
-        res.status(500).json({ error: 'Failed to add track to playlist' });
-    }
-});
+
 
 // Удалить трек из плейлиста
 app.delete('/api/playlists/:playlistId/tracks/:trackId', requireAuth, async (req, res) => {
@@ -790,6 +768,152 @@ app.post('/api/generate', requireAuth, async (req, res) => {
     } catch (error) {
         console.error('Error generating track:', error);
         res.status(500).json({ error: 'Failed to generate track' });
+    }
+});
+
+// ============= ЗАГРУЗКА АВАТАРА =============
+
+
+const avatarStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const dir = path.join(__dirname, 'uploads/avatars');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname);
+        cb(null, `avatar-${req.userId}${ext}`);
+    }
+});
+
+const uploadAvatar = multer({
+    storage: avatarStorage,
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype.startsWith('image/')) cb(null, true);
+        else cb(new Error('Only images allowed'), false);
+    }
+});
+
+// Раздача статики для папки uploads (если ещё нет)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Эндпоинт для загрузки аватара
+app.post('/api/user/avatar', requireAuth, uploadAvatar.single('avatar'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const avatarUrl = `/uploads/avatars/${req.file.filename}`;
+    await pool.query('UPDATE users SET profile_image_url = $1, updated_at = NOW() WHERE id = $2', [avatarUrl, req.userId]);
+    res.json({ avatarUrl });
+});
+
+app.delete('/api/user/avatar', requireAuth, async (req, res) => {
+    await pool.query('UPDATE users SET profile_image_url = NULL, updated_at = NOW() WHERE id = $1', [req.userId]);
+    res.json({ success: true });
+});
+
+// ============= ИСТОРИЯ ПРОСЛУШИВАНИЙ =============
+
+// Получить историю прослушиваний (последние 50)
+app.get('/api/user/history', requireAuth, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                p.played_at,
+                t.id as track_id,
+                t.title,
+                t.duration,
+                t.genre,
+                t.mood,
+                a.name as artist_name,
+                t.cover_url
+            FROM plays p
+            JOIN tracks t ON p.track_id = t.id
+            LEFT JOIN artists a ON t.artist_id = a.id
+            WHERE p.user_id = $1
+            ORDER BY p.played_at DESC
+            LIMIT 50
+        `, [req.userId]);
+        
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error fetching history:', error);
+        res.status(500).json({ error: 'Failed to fetch listening history' });
+    }
+});
+
+// Получить расширенную статистику прослушиваний
+app.get('/api/user/listening-stats', requireAuth, async (req, res) => {
+    try {
+        // Общее количество прослушиваний
+        const totalPlays = await pool.query(
+            'SELECT COUNT(*) FROM plays WHERE user_id = $1',
+            [req.userId]
+        );
+        
+        // Топ-5 треков по количеству прослушиваний
+        const topTracks = await pool.query(`
+            SELECT 
+                t.id,
+                t.title,
+                a.name as artist_name,
+                COUNT(*) as play_count
+            FROM plays p
+            JOIN tracks t ON p.track_id = t.id
+            LEFT JOIN artists a ON t.artist_id = a.id
+            WHERE p.user_id = $1
+            GROUP BY t.id, t.title, a.name
+            ORDER BY play_count DESC
+            LIMIT 5
+        `, [req.userId]);
+        
+        // Топ-3 жанра
+        const topGenres = await pool.query(`
+            SELECT 
+                t.genre,
+                COUNT(*) as play_count
+            FROM plays p
+            JOIN tracks t ON p.track_id = t.id
+            WHERE p.user_id = $1 AND t.genre IS NOT NULL AND t.genre != ''
+            GROUP BY t.genre
+            ORDER BY play_count DESC
+            LIMIT 3
+        `, [req.userId]);
+        
+        // Топ-3 исполнителя
+        const topArtists = await pool.query(`
+            SELECT 
+                a.name,
+                COUNT(*) as play_count
+            FROM plays p
+            JOIN tracks t ON p.track_id = t.id
+            LEFT JOIN artists a ON t.artist_id = a.id
+            WHERE p.user_id = $1 AND a.name IS NOT NULL
+            GROUP BY a.name
+            ORDER BY play_count DESC
+            LIMIT 3
+        `, [req.userId]);
+        
+        // Статистика по дням (последние 7 дней)
+        const last7Days = await pool.query(`
+            SELECT 
+                DATE(played_at) as date,
+                COUNT(*) as plays
+            FROM plays
+            WHERE user_id = $1 AND played_at > NOW() - INTERVAL '7 days'
+            GROUP BY DATE(played_at)
+            ORDER BY date DESC
+        `, [req.userId]);
+        
+        res.json({
+            totalPlays: parseInt(totalPlays.rows[0].count) || 0,
+            topTracks: topTracks.rows,
+            topGenres: topGenres.rows,
+            topArtists: topArtists.rows,
+            last7Days: last7Days.rows
+        });
+    } catch (error) {
+        console.error('Error fetching listening stats:', error);
+        res.status(500).json({ error: 'Failed to fetch listening statistics' });
     }
 });
 
