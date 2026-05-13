@@ -1,12 +1,12 @@
-import { Play, Pause, Heart, MoreHorizontal, Clock, Activity, Plus } from "lucide-react";
+import { Play, Pause, Heart, Clock, Activity, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { type Track, useAddFavorite, useRemoveFavorite } from "@workspace/api-client-react";
 import { usePlayer } from "@/hooks/use-player";
 import { formatTime } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
-import { useAuth } from "@/contexts/AuthContext";
 import { AddToPlaylistDialog } from "@/components/playlists/add-to-playlist-dialog";
+import { useEffect, useState } from "react";
 
 interface TrackCardProps {
   track: Track;
@@ -17,10 +17,20 @@ export function TrackCard({ track, queueContext = [] }: TrackCardProps) {
   const { currentTrack, isPlaying, playTrack, togglePlay } = usePlayer();
   const isCurrentTrack = currentTrack?.id === track.id;
   const isCurrentlyPlaying = isCurrentTrack && isPlaying;
-  
+  const [artistName, setArtistName] = useState('');
   const queryClient = useQueryClient();
   const addFav = useAddFavorite();
   const removeFav = useRemoveFavorite();
+
+  // Загружаем имя исполнителя
+  useEffect(() => {
+    if (track.artist_id) {
+      fetch(`/api/artist/${track.artist_id}`)
+        .then(res => res.json())
+        .then(data => setArtistName(data.name))
+        .catch(err => console.error('Failed to fetch artist:', err));
+    }
+  }, [track.artist_id]);
 
   const handlePlayClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -100,13 +110,18 @@ export function TrackCard({ track, queueContext = [] }: TrackCardProps) {
         <h3 className="font-display font-bold text-lg truncate text-foreground group-hover:text-primary transition-colors">
           {track.title}
         </h3>
+        <p className="text-xs text-muted-foreground truncate">
+          {artistName || 'Неизвестный исполнитель'}
+        </p>
         <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span className="truncate">{track.genre} • {track.mood}</span>
+          <span className="truncate">{track.genre}  {track.mood}</span>
         </div>
         <div className="flex items-center gap-3 text-xs font-mono text-muted-foreground/80 mt-2">
-          <span className="flex items-center gap-1 bg-secondary/50 px-2 py-1 rounded-md">
-            <Activity className="w-3 h-3" /> {track.tempo} BPM
-          </span>
+          {track.tempo && (
+            <span className="flex items-center gap-1 bg-secondary/50 px-2 py-1 rounded-md">
+              <Activity className="w-3 h-3" /> {track.tempo} BPM
+            </span>
+          )}
           <span className="flex items-center gap-1 bg-secondary/50 px-2 py-1 rounded-md">
             <Clock className="w-3 h-3" /> {formatTime(track.duration)}
           </span>

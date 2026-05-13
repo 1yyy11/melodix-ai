@@ -289,7 +289,7 @@ const savePlay = async (trackId: string) => {
           </div>
           <div className="flex flex-col truncate">
             <span className="font-semibold text-sm truncate text-foreground">{currentTrack.title}</span>
-            <span className="text-xs text-muted-foreground truncate">{artistName || currentTrack.artist_id}</span>
+         
           </div>
           <Button 
             variant="ghost" 

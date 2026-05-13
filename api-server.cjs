@@ -10,16 +10,37 @@ const fs = require('fs');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const multer = require('multer');
+ const { z } = require('zod');
 const GENIUS_ACCESS_TOKEN = '0yMlIu83IbruTlz6GvVv6jIndVTIXSWfLf4I8ET0riafRW9IE5BU0ROfE7jL5Llc';
 const app = express();
 const port = process.env.PORT || 3001;
-
+require('dotenv').config();
 // Конфигурация
 const JWT_SECRET = 'melodix-super-secret-key-change-in-production';
 const SALT_ROUNDS = 10;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: ['http://localhost:3000'],
+    credentials: true
+}));
+
+const registerSchema = z.object({
+    firstName: z.string().min(2).max(30).optional(),
+
+    lastName: z.string().min(2).max(30).optional(),
+
+    email: z.string().email(),
+
+    password: z.string().min(6).max(100)
+});
+
+const loginSchema = z.object({
+    email: z.string().email(),
+
+    password: z.string().min(1)
+});
+
 app.use(express.json());
 
 // Сессии
@@ -175,7 +196,7 @@ const AUDIO_DIR = path.join(__dirname, 'downloaded_audio');
 
 // Раздаём аудио файлы
 app.get('/audio/:filename', (req, res) => {
-    const filename = req.params.filename;
+   const filename = path.basename(req.params.filename);
     const filepath = path.join(AUDIO_DIR, filename);
     
     console.log(`🎵 Запрос аудио: ${filename}`);
@@ -283,40 +304,87 @@ async function getLyricsFromGenius(artist, title) {
 
 // Регистрация
 app.post('/api/auth/register', async (req, res) => {
-    const { email, password, firstName, lastName } = req.body;
-    
-    if (!email || !password) {
-        return res.status(400).json({ error: 'Email and password required' });
-    }
-    
-    if (password.length < 6) {
-        return res.status(400).json({ error: 'Password must be at least 6 characters' });
-    }
-    
     try {
-        const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
-        if (existing.rows.length > 0) {
-            return res.status(400).json({ error: 'User already exists' });
+
+        // VALIDATION
+        const validation = registerSchema.safeParse(req.body);
+
+        if (!validation.success) {
+            return res.status(400).json({
+                error: validation.error.errors
+            });
         }
-        
-        const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-        
+
+        // validated data
+        const {
+            email,
+            password,
+            firstName,
+            lastName
+        } = validation.data;
+
+        // check existing user
+        const existing = await pool.query(
+            'SELECT id FROM users WHERE email = $1',
+            [email]
+        );
+
+        if (existing.rows.length > 0) {
+            return res.status(400).json({
+                error: 'User already exists'
+            });
+        }
+
+        // hash password
+        const passwordHash = await bcrypt.hash(
+            password,
+            SALT_ROUNDS
+        );
+
+        // insert user
         const result = await pool.query(
-            `INSERT INTO users (id, email, password_hash, first_name, last_name, created_at, updated_at) 
-             VALUES (gen_random_uuid(), $1, $2, $3, $4, NOW(), NOW()) 
-             RETURNING id, email, first_name, last_name`,
-            [email, passwordHash, firstName || null, lastName || null]
+            `INSERT INTO users (
+                id,
+                email,
+                password_hash,
+                first_name,
+                last_name,
+                created_at,
+                updated_at
+            ) 
+            VALUES (
+                gen_random_uuid(),
+                $1,
+                $2,
+                $3,
+                $4,
+                NOW(),
+                NOW()
+            ) 
+            RETURNING id, email, first_name, last_name`,
+            [
+                email,
+                passwordHash,
+                firstName || null,
+                lastName || null
+            ]
         );
-        
+
         const user = result.rows[0];
+
         req.session.userId = user.id;
-        
+
         const token = jwt.sign(
-            { userId: user.id, email: user.email },
+            {
+                userId: user.id,
+                email: user.email
+            },
             JWT_SECRET,
-            { expiresIn: '30d' }
+            {
+                expiresIn: '30d'
+            }
         );
-        
+
         res.json({
             success: true,
             user: {
@@ -327,21 +395,30 @@ app.post('/api/auth/register', async (req, res) => {
             },
             token
         });
+
     } catch (error) {
         console.error('Registration error:', error);
-        res.status(500).json({ error: 'Registration failed' });
+
+        res.status(500).json({
+            error: 'Registration failed'
+        });
     }
 });
 
 // Вход
 app.post('/api/auth/login', async (req, res) => {
-    const { email, password } = req.body;
-    
-    if (!email || !password) {
-        return res.status(400).json({ error: 'Email and password required' });
-    }
-    
     try {
+
+        // VALIDATION
+        const validation = loginSchema.safeParse(req.body);
+
+        if (!validation.success) {
+            return res.status(400).json({
+                error: validation.error.errors
+            });
+        }
+
+        const { email, password } = validation.data;
         const result = await pool.query(
             `SELECT id, email, password_hash, first_name, last_name, profile_image_url 
              FROM users WHERE email = $1`,
@@ -448,77 +525,194 @@ app.patch('/api/user', requireAuth, async (req, res) => {
     }
 });
 
+async function getLyricsFromAmdm(artist, title) {
+    try {
+        // Формируем поисковый запрос (можно добавить транслитерацию для лучшего поиска)
+        const searchQuery = `${artist} ${title}`;
+        const searchUrl = `https://amdm.ru/search/?text=${encodeURIComponent(searchQuery)}`;
+        const searchRes = await axios.get(searchUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            timeout: 10000
+        });
+        const $ = cheerio.load(searchRes.data);
+        
+        // Берём первую ссылку на песню (селектор может меняться, нужна адаптация)
+        const firstLink = $('.song-item a').first().attr('href');
+        if (!firstLink) return null;
+        
+        const songUrl = `https://amdm.ru${firstLink}`;
+        const songRes = await axios.get(songUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0' }
+        });
+        const $$ = cheerio.load(songRes.data);
+        
+        // Текст песни может быть в .song-text или в .chord (аккорды + текст)
+        let lyrics = $$('.song-text').text().trim();
+        if (!lyrics) {
+            lyrics = $$('.chord').text().trim();
+        }
+        return lyrics || null;
+    } catch (error) {
+        console.log(`⚠️ amdm.ru не дал текст для ${artist} - ${title}`);
+        return null;
+    }
+}
+
 // ============= ТЕКСТЫ ПЕСЕН (С ПОИСКОМ НА GENIUS) =============
 app.get('/api/lyrics', async (req, res) => {
     const { artist, title } = req.query;
-    console.log(`🔍 Поиск текста: ${artist} - ${title}`);
-    
     if (!artist || !title) {
         return res.status(400).json({ error: 'Artist and title are required' });
     }
     
     try {
-        // Сначала ищем в базе данных
-        const dbResult = await pool.query(
-            `SELECT lyrics FROM tracks 
-             WHERE title ILIKE $1 AND artist ILIKE $2`,
-            [`%${title}%`, `%${artist}%`]
-        );
-        
-        if (dbResult.rows.length > 0 && dbResult.rows[0].lyrics) {
-            console.log('✅ Текст найден в базе данных');
-            return res.json({ lyrics: dbResult.rows[0].lyrics, source: 'database' });
+        const lyricsData = await fetchLyricsMultiSource(artist, title);
+        if (lyricsData) {
+            const lyrics = lyricsData.syncedLyrics || lyricsData.plainLyrics;
+            return res.json({ lyrics, source: 'multisource' });
+        } else {
+            return res.json({ lyrics: null, error: 'Lyrics not found' });
         }
-        
-        // Если нет в БД - ищем на Genius
-        console.log('🌐 Ищем на Genius...');
-        const lyrics = await getLyricsFromGenius(artist, title);
-        
-        if (lyrics) {
-            console.log('✅ Текст получен с Genius');
-            return res.json({ lyrics: lyrics, source: 'genius' });
-        }
-        
-        console.log('❌ Текст не найден');
-        res.json({ lyrics: null, error: 'Lyrics not found' });
-        
     } catch (error) {
         console.error('Ошибка получения текста:', error);
         res.status(500).json({ error: error.message });
     }
 });
+
 app.get('/api/lyrics-lrc', async (req, res) => {
     const { artist, title } = req.query;
-    console.log(`🎤 Запрос текста (lrc): ${artist} - ${title}`);
+    console.log(`🎤 Запрос текста: ${artist} - ${title}`);
 
-    // 1. Пробуем LRCLIB
+    // 1. LRCLIB
     try {
         const lrcRes = await axios.get(`https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`);
         if (lrcRes.data?.syncedLyrics) {
-            // У LRCLIB есть синхронизированный текст — отлично!
             return res.json({ syncedLyrics: lrcRes.data.syncedLyrics });
         }
-    } catch (lrclibError) {
-        // LRCLIB вернул ошибку (например, 404). Логируем и идём дальше.
-        console.log(`⚠️ LRCLIB не нашёл текст для ${artist} - ${title}: ${lrclibError.message}`);
-        // Здесь специально НЕ делаем return, чтобы перейти к следующему шагу.
+    } catch (e) { /* игнорируем */ }
+
+    // 2. amdm.ru (русские песни)
+    const amdmLyrics = await getLyricsFromAmdm(artist, title);
+    if (amdmLyrics) {
+        return res.json({ plainLyrics: amdmLyrics });
     }
 
-    // 2. Если LRCLIB не помог, пробуем Genius API
+    // 3. Genius (fallback)
     try {
-        const lyrics = await getLyricsFromGenius(artist, title);
-        if (lyrics) {
-            // У Genius есть обычный текст
-            return res.json({ plainLyrics: lyrics });
-        } else {
-            // Genius тоже ничего не нашёл
-            return res.json({ plainLyrics: `Текст песни "${title}"\nИсполнитель: ${artist}\n\nК сожалению, текст не найден.` });
+        const geniusLyrics = await getLyricsFromGenius(artist, title);
+        if (geniusLyrics) {
+            return res.json({ plainLyrics: geniusLyrics });
         }
-    } catch (geniusError) {
-        console.error(`❌ Ошибка при запросе к Genius: ${geniusError.message}`);
-        return res.status(500).json({ error: 'Не удалось загрузить текст ни из одного источника.' });
-    }
+    } catch (e) { /* игнорируем */ }
+
+    return res.json({ plainLyrics: `Текст для "${title}" не найден.` });
 });
+
+// ============= ДОПОЛНИТЕЛЬНЫЕ ИСТОЧНИКИ ТЕКСТОВ =============
+
+// 1. LRCLIB (синхронизированные тексты)
+async function fetchFromLRCLIB(artist, title) {
+    try {
+        const url = `https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`;
+        const response = await axios.get(url, { timeout: 5000 });
+        if (response.data?.syncedLyrics) {
+            return { source: 'lrclib', syncedLyrics: response.data.syncedLyrics };
+        }
+        return null;
+    } catch (err) {
+        console.log(`   LRCLIB: ${err.message}`);
+        return null;
+    }
+}
+
+// 2. Lyrics.ovh (простой API, хорошо для русских песен)
+async function fetchFromLyricsOvh(artist, title) {
+    try {
+        const url = `https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`;
+        const response = await axios.get(url, { timeout: 5000 });
+        if (response.data?.lyrics && !response.data.lyrics.includes('No lyrics found')) {
+            // Очищаем от лишних переносов и лицензионных уведомлений
+            let lyrics = response.data.lyrics;
+            // Удаляем паразитные строки (например, "Paroles de la chanson...")
+            lyrics = lyrics.replace(/^Paroles de la chanson.*$/m, '');
+            lyrics = lyrics.replace(/^Lyrics of the song.*$/m, '');
+            return { source: 'lyrics.ovh', plainLyrics: lyrics.trim() };
+        }
+        return null;
+    } catch (err) {
+        console.log(`   Lyrics.ovh: ${err.message}`);
+        return null;
+    }
+}
+
+// 3. Musixmatch (требуется API ключ, но есть бесплатный тариф)
+// Регистрация: https://developer.musixmatch.com/
+// Бесплатный ключ даёт 2000 запросов в день.
+// Если нет ключа, этот источник можно пропустить.
+const MUSIXMATCH_API_KEY = process.env.MUSIXMATCH_API_KEY || ''; // Добавьте в .env
+
+async function fetchFromMusixmatch(artist, title) {
+    if (!MUSIXMATCH_API_KEY) return null;
+    try {
+        // Сначала ищем трек
+        const searchUrl = `https://api.musixmatch.com/ws/1.1/track.search?q_track=${encodeURIComponent(title)}&q_artist=${encodeURIComponent(artist)}&apikey=${MUSIXMATCH_API_KEY}&format=json`;
+        const searchRes = await axios.get(searchUrl, { timeout: 5000 });
+        const trackList = searchRes.data?.message?.body?.track_list;
+        if (!trackList || trackList.length === 0) return null;
+        const trackId = trackList[0].track.track_id;
+        // Получаем текст
+        const lyricsUrl = `https://api.musixmatch.com/ws/1.1/track.lyrics.get?track_id=${trackId}&apikey=${MUSIXMATCH_API_KEY}&format=json`;
+        const lyricsRes = await axios.get(lyricsUrl, { timeout: 5000 });
+        const lyricsBody = lyricsRes.data?.message?.body?.lyrics?.lyrics_body;
+        if (lyricsBody && !lyricsBody.includes('Instrumental')) {
+            // Очищаем от рекламных блоков (обычно после "... See you")
+            let clean = lyricsBody.split('...')[0].trim();
+            return { source: 'musixmatch', plainLyrics: clean };
+        }
+        return null;
+    } catch (err) {
+        console.log(`   Musixmatch: ${err.message}`);
+        return null;
+    }
+}
+
+// 4. Genius (уже есть, но используем как fallback)
+// ... ваша существующая функция getLyricsFromGenius
+
+async function fetchLyricsMultiSource(artist, title) {
+    console.log(`🔍 Поиск текста для: ${artist} - ${title}`);
+    
+    // Источники в порядке приоритета: сначала синхронизированные, потом обычные
+    const sources = [
+        { name: 'LRCLIB', fn: () => fetchFromLRCLIB(artist, title), wantsSynced: true },
+        { name: 'Lyrics.ovh', fn: () => fetchFromLyricsOvh(artist, title), wantsSynced: false },
+        { name: 'Musixmatch', fn: () => fetchFromMusixmatch(artist, title), wantsSynced: false },
+        { name: 'Genius', fn: () => getLyricsFromGenius(artist, title), wantsSynced: false } // предполагаем, что возвращает строку или null
+    ];
+    
+    for (const source of sources) {
+        try {
+            const result = await source.fn();
+            if (result) {
+                if (source.wantsSynced && result.syncedLyrics) {
+                    console.log(`✅ Найден синхронизированный текст через ${source.name}`);
+                    return { syncedLyrics: result.syncedLyrics };
+                } else if (!source.wantsSynced && (result.plainLyrics || (typeof result === 'string' && result))) {
+                    const plainText = result.plainLyrics || result;
+                    if (plainText && plainText.length > 50) {
+                        console.log(`✅ Найден обычный текст через ${source.name}`);
+                        return { plainLyrics: plainText };
+                    }
+                }
+            }
+        } catch (err) {
+            console.log(`   ${source.name} ошибка: ${err.message}`);
+        }
+    }
+    
+    console.log(`❌ Текст не найден ни в одном источнике`);
+    return null;
+}
 
 // ============= ТРЕКИ =============
 app.get('/api/tracks', async (req, res) => {
