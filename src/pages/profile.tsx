@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react"; // ← добавлен useRef
+import { useState, useEffect, useRef } from "react";
 import { Layout } from "@/components/layout";
 import { useAuth } from "@/contexts/AuthContext";
 import { User, Activity, Music2, ListMusic, Heart, Loader2, Edit2, Save, X, Camera, Trash2 } from "lucide-react";
@@ -7,6 +7,7 @@ import { ru } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
+import { api } from '../services/api';
 
 interface UserStats {
     generatedTracks: number;
@@ -17,7 +18,7 @@ interface UserStats {
     favoriteMood?: string;
     memberSince?: string;
 }
-
+const API_URL = "http://localhost:3001/api";
 export default function Profile() {
     const { user, token, isAuthenticated, logout, updateProfile } = useAuth();
     const { toast } = useToast();
@@ -37,7 +38,7 @@ export default function Profile() {
     const [firstName, setFirstName] = useState(user?.firstName || '');
     const [lastName, setLastName] = useState(user?.lastName || '');
     const [isSaving, setIsSaving] = useState(false);
-      const [uploadingAvatar, setUploadingAvatar] = useState(false);
+    const [uploadingAvatar, setUploadingAvatar] = useState(false);
     const [avatarPreview, setAvatarPreview] = useState(user?.profileImageUrl || '');
 
     useEffect(() => {
@@ -46,11 +47,23 @@ export default function Profile() {
         }
     }, [isAuthenticated, token]);
 
+    // Функция для авторизованных запросов с credentials
+    const authFetch = async (url: string, options: RequestInit = {}) => {
+        return fetch(url, {
+            ...options,
+            credentials: 'include',  // ✅ отправляем cookies
+            headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+                ...options.headers,
+            },
+        });
+    };
+
     const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
         
-        // Проверка типа и размера
         if (!file.type.startsWith('image/')) {
             toast({ title: "Ошибка", description: "Можно загружать только изображения", variant: "destructive" });
             return;
@@ -60,20 +73,22 @@ export default function Profile() {
             return;
         }
 
-           setUploadingAvatar(true);
+        setUploadingAvatar(true);
         const formData = new FormData();
         formData.append('avatar', file);
         
         try {
             const response = await fetch('http://localhost:3001/api/user/avatar', {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` },
+                credentials: 'include',  // ✅ для cookies
+                headers: {
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+                },
                 body: formData
             });
             if (!response.ok) throw new Error('Upload failed');
             const data = await response.json();
             setAvatarPreview(data.avatarUrl);
-            // Обновляем пользователя в контексте (можно перезагрузить)
             if (updateProfile) await updateProfile({ profileImageUrl: data.avatarUrl });
             toast({ title: "Успех", description: "Аватар обновлён" });
         } catch (error) {
@@ -87,7 +102,10 @@ export default function Profile() {
         try {
             const response = await fetch('http://localhost:3001/api/user/avatar', {
                 method: 'DELETE',
-                headers: { 'Authorization': `Bearer ${token}` }
+                credentials: 'include',  // ✅ для cookies
+                headers: {
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+                },
             });
             if (!response.ok) throw new Error('Delete failed');
             setAvatarPreview('');
@@ -102,13 +120,10 @@ export default function Profile() {
         setIsLoading(true);
         try {
             // Получаем статистику пользователя
-            const statsResponse = await fetch('http://localhost:3001/api/user/stats', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const statsResponse = await authFetch('http://localhost:3001/api/user/stats');
             
             if (statsResponse.ok) {
                 const statsData = await statsResponse.json();
-                console.log('Stats data:', statsData);
                 setStats(prev => ({
                     ...prev,
                     generatedTracks: statsData.generatedTracks || 0,
@@ -119,38 +134,25 @@ export default function Profile() {
             }
 
             // Получаем предпочтения пользователя
-            const prefsResponse = await fetch('http://localhost:3001/api/user/preferences', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const prefsResponse = await authFetch('http://localhost:3001/api/user/preferences');
             
             if (prefsResponse.ok) {
                 const prefsData = await prefsResponse.json();
                 if (prefsData.preferred_genres && prefsData.preferred_genres.length > 0) {
-                    setStats(prev => ({
-                        ...prev,
-                        favoriteGenre: prefsData.preferred_genres[0]
-                    }));
+                    setStats(prev => ({ ...prev, favoriteGenre: prefsData.preferred_genres[0] }));
                 }
                 if (prefsData.preferred_moods && prefsData.preferred_moods.length > 0) {
-                    setStats(prev => ({
-                        ...prev,
-                        favoriteMood: prefsData.preferred_moods[0]
-                    }));
+                    setStats(prev => ({ ...prev, favoriteMood: prefsData.preferred_moods[0] }));
                 }
             }
 
             // Получаем дату регистрации пользователя
-            const userResponse = await fetch('http://localhost:3001/api/user', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const userResponse = await authFetch('http://localhost:3001/api/user');
             
             if (userResponse.ok) {
                 const userData = await userResponse.json();
                 if (userData.createdAt) {
-                    setStats(prev => ({
-                        ...prev,
-                        memberSince: userData.createdAt
-                    }));
+                    setStats(prev => ({ ...prev, memberSince: userData.createdAt }));
                 }
             }
 
@@ -171,16 +173,9 @@ export default function Profile() {
         try {
             await updateProfile({ firstName, lastName });
             setIsEditing(false);
-            toast({
-                title: "Успех",
-                description: "Профиль обновлён",
-            });
+            toast({ title: "Успех", description: "Профиль обновлён" });
         } catch (error) {
-            toast({
-                title: "Ошибка",
-                description: "Не удалось обновить профиль",
-                variant: "destructive",
-            });
+            toast({ title: "Ошибка", description: "Не удалось обновить профиль", variant: "destructive" });
         } finally {
             setIsSaving(false);
         }
@@ -222,7 +217,7 @@ export default function Profile() {
                 {/* Header */}
                 <div className="glass-card rounded-3xl p-8 md:p-12 flex flex-col md:flex-row items-center md:items-start gap-8 relative overflow-hidden">
                    
-                         {/* Аватар с возможностью загрузки */}
+                    {/* Аватар с возможностью загрузки */}
                     <div className="relative z-10 w-32 h-32 md:w-40 md:h-40 rounded-full bg-secondary border-4 border-background overflow-hidden shrink-0 shadow-2xl group">
                         {avatarPreview ? (
                             <img src={avatarPreview} alt="Avatar" className="w-full h-full object-cover" />
@@ -231,7 +226,7 @@ export default function Profile() {
                                 <User className="w-16 h-16 text-white/80" />
                             </div>
                         )}
-                         <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
                                 onClick={() => fileInputRef.current?.click()}
                                 className="p-2 rounded-full bg-white/20 hover:bg-white/30"
@@ -264,8 +259,6 @@ export default function Profile() {
                     </div>
                    
                     <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-r from-primary/20 via-accent/10 to-background z-0"></div>
-                    
-                  
                     
                     <div className="relative z-10 text-center md:text-left flex-1 mt-2">
                         {isEditing ? (

@@ -1,57 +1,84 @@
-
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const session = require('express-session');
+const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const multer = require('multer');
- const { z } = require('zod');
-const GENIUS_ACCESS_TOKEN = '0yMlIu83IbruTlz6GvVv6jIndVTIXSWfLf4I8ET0riafRW9IE5BU0ROfE7jL5Llc';
+
+// ============= КОНСТАНТЫ =============
 const app = express();
 const port = process.env.PORT || 3001;
-require('dotenv').config();
-// Конфигурация
-const JWT_SECRET = 'melodix-super-secret-key-change-in-production';
+const JWT_SECRET = process.env.JWT_SECRET || 'melodix-super-secret-key-change-in-production';
 const SALT_ROUNDS = 10;
+const GENIUS_ACCESS_TOKEN = '0yMlIu83IbruTlz6GvVv6jIndVTIXSWfLf4I8ET0riafRW9IE5BU0ROfE7jL5Llc';
 
-// Middleware
+require('dotenv').config();
+const { OAuth2Client } = require("google-auth-library");
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+// ============= MIDDLEWARE =============
 app.use(cors({
-    origin: ['http://localhost:3000'],
-    credentials: true
+    origin: [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://172.27.57.108:3000",
+        "http://localhost:5173",
+                "http://localhost:3001",
+        "http://127.0.0.1:3000"
+    ],
+    credentials: true  // ✅ для cookies
 }));
-
-const registerSchema = z.object({
-    firstName: z.string().min(2).max(30).optional(),
-
-    lastName: z.string().min(2).max(30).optional(),
-
-    email: z.string().email(),
-
-    password: z.string().min(6).max(100)
-});
-
-const loginSchema = z.object({
-    email: z.string().email(),
-
-    password: z.string().min(1)
-});
 
 app.use(express.json());
+app.use(cookieParser());
 
-// Сессии
-app.use(session({
-    secret: 'melodix-session-secret',
-    resave: false,
-    saveUninitialized: false,
-    cookie: { secure: false, maxAge: 30 * 24 * 60 * 60 * 1000 }
-}));
+// ============= ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ COOKIE =============
+const setAuthCookie = (res, token) => {
+    res.cookie('token', token, {
+        httpOnly: true,
+        secure: false,
+        path: '/',
+        sameSite: false,  // ← отключи SameSite полностью для dev
+        maxAge: 30 * 24 * 60 * 60 * 1000
+    });
+};
 
-// Подключение к PostgreSQL
+// ============= MIDDLEWARE AUTH =============
+const requireAuth = (req, res, next) => {
+    // 1. Пробуем взять токен из cookies
+    let token = req.cookies?.token;
+    
+    // 2. Если нет - из заголовка Authorization
+    if (!token) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            token = authHeader.split(' ')[1];
+        }
+    }
+    
+    if (!token) {
+        return res.status(401).json({ error: 'Authentication required' });
+    }
+    
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        req.userId = decoded.userId;
+        req.user = decoded;
+        next();
+    } catch (err) {
+        if (err.name === 'TokenExpiredError') {
+            return res.status(401).json({ error: 'Token expired' });
+        }
+        return res.status(401).json({ error: 'Invalid token' });
+    }
+};
+
+// ============= ПОДКЛЮЧЕНИЕ К POSTGRESQL =============
 const pool = new Pool({
     user: 'postgres',
     host: 'localhost',
@@ -65,145 +92,15 @@ pool.connect((err) => {
     else console.log('✅ Connected to PostgreSQL');
 });
 
-// Middleware для проверки аутентификации
-const requireAuth = (req, res, next) => {
-    if (req.session.userId) {
-        req.userId = req.session.userId;
-        return next();
-    }
-    
-    const authHeader = req.headers.authorization;
-    if (authHeader) {
-        const token = authHeader.split(' ')[1];
-        try {
-            const decoded = jwt.verify(token, JWT_SECRET);
-            req.userId = decoded.userId;
-            return next();
-        } catch (err) {
-            return res.status(401).json({ error: 'Invalid token' });
-        }
-    }
-    
-    return res.status(401).json({ error: 'Authentication required' });
-};
-
-
-
-// Получить рекомендации для пользователя
-app.get('/api/recommendations', requireAuth, async (req, res) => {
-    try {
-        const result = await pool.query(`
-            SELECT r.*, t.title, a.name as artist_name, t.genre, t.mood, t.tempo, t.duration, t.cover_url
-            FROM recommendations r
-            JOIN tracks t ON r.track_id = t.id
-            JOIN artists a ON t.artist_id = a.id
-            WHERE r.user_id = $1 AND r.expires_at > NOW()
-            ORDER BY r.score DESC
-            LIMIT 30
-        `, [req.userId]);
-        
-        res.json(result.rows);
-    } catch (error) {
-        console.error('Error fetching recommendations:', error);
-        res.status(500).json({ error: 'Failed to get recommendations' });
-    }
-});
-
-// POST /api/plays - добавить в историю прослушиваний
-app.post('/api/plays', requireAuth, async (req, res) => {
-    const { trackId } = req.body;
-    try {
-        await pool.query(
-            'INSERT INTO plays (id, user_id, track_id, played_at) VALUES (gen_random_uuid(), $1, $2, NOW())',
-            [req.userId, trackId]
-        );
-        await pool.query('UPDATE tracks SET play_count = play_count + 1 WHERE id = $1', [trackId]);
-        res.json({ success: true });
-    } catch (error) {
-        console.error('Error saving play:', error);
-        res.status(500).json({ error: 'Failed to save play history' });
-    }
-});
-// Получить статистику пользователя
-app.get('/api/user/stats', requireAuth, async (req, res) => {
-    try {
-        // Количество треков пользователя (через artist_id или user_id)
-        const tracksResult = await pool.query(
-            `SELECT COUNT(*) FROM tracks WHERE user_id = $1 OR artist_id IN 
-             (SELECT id FROM artists WHERE id IN (SELECT artist_id FROM tracks WHERE user_id = $1))`,
-            [req.userId]
-        );
-        
-        // Количество избранных треков
-        const favoritesResult = await pool.query(
-            'SELECT COUNT(*) FROM favorites WHERE user_id = $1',
-            [req.userId]
-        );
-        
-        // Количество плейлистов
-        const playlistsResult = await pool.query(
-            'SELECT COUNT(*) FROM playlists WHERE user_id = $1',
-            [req.userId]
-        );
-        
-        // Количество прослушиваний
-        const playsResult = await pool.query(
-            'SELECT COUNT(*) FROM plays WHERE user_id = $1',
-            [req.userId]
-        );
-        
-        console.log('Stats for user', req.userId, {
-            tracks: tracksResult.rows[0].count,
-            favorites: favoritesResult.rows[0].count,
-            playlists: playlistsResult.rows[0].count,
-            plays: playsResult.rows[0].count
-        });
-        
-        res.json({
-            generatedTracks: parseInt(tracksResult.rows[0].count) || 0,
-            favorites: parseInt(favoritesResult.rows[0].count) || 0,
-            playlists: parseInt(playlistsResult.rows[0].count) || 0,
-            totalPlays: parseInt(playsResult.rows[0].count) || 0
-        });
-    } catch (error) {
-        console.error('Error fetching user stats:', error);
-        res.status(500).json({ error: 'Failed to get user stats' });
-    }
-});
-// Получить предпочтения пользователя
-app.get('/api/user/preferences', requireAuth, async (req, res) => {
-    try {
-        const result = await pool.query(`
-            SELECT preferred_genres, preferred_artists, preferred_moods, min_tempo, max_tempo
-            FROM user_preferences
-            WHERE user_id = $1
-        `, [req.userId]);
-        
-        res.json(result.rows[0] || {});
-    } catch (error) {
-        res.status(500).json({ error: 'Failed to get preferences' });
-    }
-});
-
-// Обновить рекомендации (вызывать раз в день)
-app.post('/api/recommendations/refresh', requireAuth, async (req, res) => {
-    // Здесь можно вызвать recommendation-engine асинхронно
-    res.json({ success: true, message: 'Recommendations refresh started' });
-});
-
-// Путь к папке с MP3// Путь к папке с MP3 - ИСПРАВЛЕНО!
+// ============= АУДИО ФАЙЛЫ =============
 const AUDIO_DIR = path.join(__dirname, 'downloaded_audio');
+app.use('/audio', express.static(AUDIO_DIR));
 
-// Раздаём аудио файлы
 app.get('/audio/:filename', (req, res) => {
-   const filename = path.basename(req.params.filename);
+    const filename = req.params.filename;
     const filepath = path.join(AUDIO_DIR, filename);
     
-    console.log(`🎵 Запрос аудио: ${filename}`);
-    console.log(`   Путь: ${filepath}`);
-    
     if (!fs.existsSync(filepath)) {
-        console.log(`   ❌ Файл не найден`);
         return res.status(404).json({ error: 'File not found' });
     }
     
@@ -212,25 +109,42 @@ app.get('/audio/:filename', (req, res) => {
     });
 });
 
-// ============= ФУНКЦИЯ ПОИСКА ТЕКСТА НА GENIUS =============
+// ============= АВАТАРЫ =============
+const avatarStorage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        const dir = path.join(__dirname, 'uploads/avatars');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+    },
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname);
+        cb(null, `avatar-${req.userId}${ext}`);
+    }
+});
+
+const uploadAvatar = multer({
+    storage: avatarStorage,
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype.startsWith('image/')) cb(null, true);
+        else cb(new Error('Only images allowed'), false);
+    }
+});
+
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// ============= ФУНКЦИИ ДЛЯ ПОИСКА ТЕКСТОВ =============
 async function getLyricsFromGenius(artist, title) {
     try {
-        // Поиск трека на Genius
         const searchUrl = `https://api.genius.com/search?q=${encodeURIComponent(`${artist} ${title}`)}`;
         const searchRes = await axios.get(searchUrl, {
             headers: { 'Authorization': `Bearer ${GENIUS_ACCESS_TOKEN}` }
         });
         
         const hits = searchRes.data.response.hits;
-        if (!hits || hits.length === 0) {
-            console.log('❌ Трек не найден на Genius');
-            return null;
-        }
+        if (!hits || hits.length === 0) return null;
         
         const songUrl = hits[0].result.url;
-        console.log(`📄 Парсинг Genius: ${songUrl}`);
-        
-        // Получаем страницу с текстом
         const page = await axios.get(songUrl, {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
         });
@@ -238,7 +152,6 @@ async function getLyricsFromGenius(artist, title) {
         const html = page.data;
         let lyricsText = '';
         
-        // Ищем текст по data-lyrics-container
         const lyricsMatch = html.match(/<div[^>]*data-lyrics-container="true"[^>]*>([\s\S]*?)<\/div>/gi);
         
         if (lyricsMatch) {
@@ -247,144 +160,157 @@ async function getLyricsFromGenius(artist, title) {
                 text = text.replace(/<[^>]*>/g, '');
                 text = text.replace(/&quot;/g, '"');
                 text = text.replace(/&amp;/g, '&');
-                text = text.replace(/&lt;/g, '<');
-                text = text.replace(/&gt;/g, '>');
                 lyricsText += text + '\n';
             }
         }
         
-        // Если не нашли - другой метод
-        if (!lyricsText.trim()) {
-            const classMatch = html.match(/<div[^>]*class="[^"]*Lyrics__Container[^"]*"[^>]*>([\s\S]*?)<\/div>/gi);
-            if (classMatch) {
-                for (const match of classMatch) {
-                    let text = match.replace(/<br\s*\/?>/gi, '\n');
-                    text = text.replace(/<[^>]*>/g, '');
-                    lyricsText += text + '\n';
-                }
-            }
-        }
-        
-        // Очищаем текст от мусора
         if (lyricsText.trim()) {
             const lines = lyricsText.split('\n');
             const cleanedLines = [];
-            
             for (let line of lines) {
                 let l = line.trim();
                 if (!l) continue;
                 if (l.match(/^\d+\s+Contributors?/i)) continue;
                 if (l.match(/^Embed$/i)) continue;
-                if (l.match(/^You might also like/i)) continue;
-                if (l.match(/^\[.*\]$/)) continue;
                 if (l.length < 2) continue;
-                
-                l = l.replace(/\([Ss]nippet[^)]*\)/g, '');
-                l = l.replace(/\([Ll]yrics\)/gi, '');
-                l = l.trim();
-                
-                if (l) cleanedLines.push(l);
+                cleanedLines.push(l);
             }
-            
             const result = cleanedLines.join('\n');
-            if (result.length > 20) {
-                console.log(`✅ Текст получен (${result.length} символов)`);
-                return result;
-            }
+            if (result.length > 20) return result;
         }
-        
         return null;
     } catch (err) {
-        console.error('Ошибка парсинга Genius:', err.message);
+        console.error('Genius error:', err.message);
         return null;
     }
 }
 
-// ============= АУТЕНТИФИКАЦИЯ =============
+async function getLyricsFromAmdm(artist, title) {
+    try {
+        const searchQuery = `${artist} ${title}`;
+        const searchUrl = `https://amdm.ru/search/?text=${encodeURIComponent(searchQuery)}`;
+        const searchRes = await axios.get(searchUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            timeout: 10000
+        });
+        const $ = cheerio.load(searchRes.data);
+        
+        const firstLink = $('.song-item a').first().attr('href');
+        if (!firstLink) return null;
+        
+        const songUrl = `https://amdm.ru${firstLink}`;
+        const songRes = await axios.get(songUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0' }
+        });
+        const $$ = cheerio.load(songRes.data);
+        
+        let lyrics = $$('.song-text').text().trim();
+        if (!lyrics) lyrics = $$('.chord').text().trim();
+        return lyrics || null;
+    } catch (error) {
+        return null;
+    }
+}
+
+async function fetchFromLRCLIB(artist, title) {
+    try {
+        const url = `https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`;
+        const response = await axios.get(url, { timeout: 5000 });
+        if (response.data?.syncedLyrics) {
+            return { source: 'lrclib', syncedLyrics: response.data.syncedLyrics };
+        }
+        return null;
+    } catch (err) {
+        return null;
+    }
+}
+
+async function fetchFromLyricsOvh(artist, title) {
+    try {
+        const url = `https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`;
+        const response = await axios.get(url, { timeout: 5000 });
+        if (response.data?.lyrics && !response.data.lyrics.includes('No lyrics found')) {
+            let lyrics = response.data.lyrics;
+            lyrics = lyrics.replace(/^Paroles de la chanson.*$/m, '');
+            lyrics = lyrics.replace(/^Lyrics of the song.*$/m, '');
+            return { source: 'lyrics.ovh', plainLyrics: lyrics.trim() };
+        }
+        return null;
+    } catch (err) {
+        return null;
+    }
+}
+
+async function fetchLyricsMultiSource(artist, title) {
+    console.log(`🔍 Поиск текста для: ${artist} - ${title}`);
+    
+    const sources = [
+        { name: 'LRCLIB', fn: () => fetchFromLRCLIB(artist, title), wantsSynced: true },
+        { name: 'Lyrics.ovh', fn: () => fetchFromLyricsOvh(artist, title), wantsSynced: false },
+        { name: 'Genius', fn: () => getLyricsFromGenius(artist, title), wantsSynced: false },
+        { name: 'Amdm', fn: () => getLyricsFromAmdm(artist, title), wantsSynced: false }
+    ];
+    
+    for (const source of sources) {
+        try {
+            const result = await source.fn();
+            if (result) {
+                if (source.wantsSynced && result.syncedLyrics) {
+                    console.log(`✅ Найден синхронизированный текст через ${source.name}`);
+                    return { syncedLyrics: result.syncedLyrics };
+                } else if (!source.wantsSynced && (result.plainLyrics || (typeof result === 'string' && result))) {
+                    const plainText = result.plainLyrics || result;
+                    if (plainText && plainText.length > 50) {
+                        console.log(`✅ Найден обычный текст через ${source.name}`);
+                        return { plainLyrics: plainText };
+                    }
+                }
+            }
+        } catch (err) {
+            console.log(`   ${source.name} ошибка: ${err.message}`);
+        }
+    }
+    return null;
+}
+
+// ============= AUTH ENDPOINTS =============
 
 // Регистрация
 app.post('/api/auth/register', async (req, res) => {
+    const { email, password, firstName, lastName } = req.body;
+    
+    if (!email || !password) {
+        return res.status(400).json({ error: 'Email and password required' });
+    }
+    
+    if (password.length < 6) {
+        return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    
     try {
-
-        // VALIDATION
-        const validation = registerSchema.safeParse(req.body);
-
-        if (!validation.success) {
-            return res.status(400).json({
-                error: validation.error.errors
-            });
-        }
-
-        // validated data
-        const {
-            email,
-            password,
-            firstName,
-            lastName
-        } = validation.data;
-
-        // check existing user
-        const existing = await pool.query(
-            'SELECT id FROM users WHERE email = $1',
-            [email]
-        );
-
+        const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
         if (existing.rows.length > 0) {
-            return res.status(400).json({
-                error: 'User already exists'
-            });
+            return res.status(400).json({ error: 'User already exists' });
         }
-
-        // hash password
-        const passwordHash = await bcrypt.hash(
-            password,
-            SALT_ROUNDS
-        );
-
-        // insert user
+        
+        const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+        
         const result = await pool.query(
-            `INSERT INTO users (
-                id,
-                email,
-                password_hash,
-                first_name,
-                last_name,
-                created_at,
-                updated_at
-            ) 
-            VALUES (
-                gen_random_uuid(),
-                $1,
-                $2,
-                $3,
-                $4,
-                NOW(),
-                NOW()
-            ) 
-            RETURNING id, email, first_name, last_name`,
-            [
-                email,
-                passwordHash,
-                firstName || null,
-                lastName || null
-            ]
+            `INSERT INTO users (id, email, password_hash, first_name, last_name, created_at, updated_at) 
+             VALUES (gen_random_uuid(), $1, $2, $3, $4, NOW(), NOW()) 
+             RETURNING id, email, first_name, last_name`,
+            [email, passwordHash, firstName || null, lastName || null]
         );
-
+        
         const user = result.rows[0];
-
-        req.session.userId = user.id;
-
         const token = jwt.sign(
-            {
-                userId: user.id,
-                email: user.email
-            },
+            { userId: user.id, email: user.email },
             JWT_SECRET,
-            {
-                expiresIn: '30d'
-            }
+            { expiresIn: '30d' }
         );
-
+        
+        setAuthCookie(res, token);
+        
         res.json({
             success: true,
             user: {
@@ -395,36 +321,26 @@ app.post('/api/auth/register', async (req, res) => {
             },
             token
         });
-
     } catch (error) {
         console.error('Registration error:', error);
-
-        res.status(500).json({
-            error: 'Registration failed'
-        });
+        res.status(500).json({ error: 'Registration failed' });
     }
 });
 
-// Вход
+// Логин
 app.post('/api/auth/login', async (req, res) => {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+        return res.status(400).json({ error: 'Email and password required' });
+    }
+    
     try {
-
-        // VALIDATION
-        const validation = loginSchema.safeParse(req.body);
-
-        if (!validation.success) {
-            return res.status(400).json({
-                error: validation.error.errors
-            });
-        }
-
-        const { email, password } = validation.data;
         const result = await pool.query(
             `SELECT id, email, password_hash, first_name, last_name, profile_image_url 
              FROM users WHERE email = $1`,
             [email]
-        );
-        
+        );        
         if (result.rows.length === 0) {
             return res.status(401).json({ error: 'Invalid email or password' });
         }
@@ -436,13 +352,13 @@ app.post('/api/auth/login', async (req, res) => {
             return res.status(401).json({ error: 'Invalid email or password' });
         }
         
-        req.session.userId = user.id;
-        
         const token = jwt.sign(
             { userId: user.id, email: user.email },
             JWT_SECRET,
             { expiresIn: '30d' }
         );
+        
+        setAuthCookie(res, token);
         
         res.json({
             success: true,
@@ -461,11 +377,63 @@ app.post('/api/auth/login', async (req, res) => {
     }
 });
 
+// Google Auth
+app.post("/api/auth/google", async (req, res) => {
+    try {
+        const { token } = req.body;
+        const ticket = await googleClient.verifyIdToken({
+            idToken: token,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        });
+        const payload = ticket.getPayload();
+        
+        if (!payload?.email) {
+            return res.status(401).json({ message: "Invalid Google token" });
+        }
+        
+        let userQuery = await pool.query(`SELECT * FROM users WHERE email = $1`, [payload.email]);
+        let user = userQuery.rows[0];
+        
+        if (!user) {
+            const created = await pool.query(
+                `INSERT INTO users (email, first_name, last_name, profile_image_url, google_id)
+                 VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+                [payload.email, payload.given_name, payload.family_name, payload.picture, payload.sub]
+            );
+            user = created.rows[0];
+        }
+        
+        const accessToken = jwt.sign(
+            { userId: user.id },
+            JWT_SECRET,
+            { expiresIn: "30d" }
+        );
+        
+        setAuthCookie(res, accessToken);
+         res.json({ 
+      success: true,
+      accessToken, 
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        profileImageUrl: user.profile_image_url
+      }
+    });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Google auth failed" });
+    }
+});
+
 // Выход
 app.post('/api/auth/logout', (req, res) => {
-    req.session.destroy(() => {
-        res.json({ success: true });
+    res.clearCookie('token', {
+        httpOnly: true,
+        sameSite: 'lax'
     });
+    res.json({ success: true });
 });
 
 // Получить текущего пользователя
@@ -479,8 +447,7 @@ app.get('/api/user', requireAuth, async (req, res) => {
         
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'User not found' });
-        }
-        
+        }        
         const user = result.rows[0];
         res.json({
             id: user.id,
@@ -495,7 +462,7 @@ app.get('/api/user', requireAuth, async (req, res) => {
     }
 });
 
-// Обновить профиль пользователя
+// Обновить профиль
 app.patch('/api/user', requireAuth, async (req, res) => {
     const { firstName, lastName, profileImageUrl } = req.body;
     
@@ -525,196 +492,23 @@ app.patch('/api/user', requireAuth, async (req, res) => {
     }
 });
 
-async function getLyricsFromAmdm(artist, title) {
-    try {
-        // Формируем поисковый запрос (можно добавить транслитерацию для лучшего поиска)
-        const searchQuery = `${artist} ${title}`;
-        const searchUrl = `https://amdm.ru/search/?text=${encodeURIComponent(searchQuery)}`;
-        const searchRes = await axios.get(searchUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0' },
-            timeout: 10000
-        });
-        const $ = cheerio.load(searchRes.data);
-        
-        // Берём первую ссылку на песню (селектор может меняться, нужна адаптация)
-        const firstLink = $('.song-item a').first().attr('href');
-        if (!firstLink) return null;
-        
-        const songUrl = `https://amdm.ru${firstLink}`;
-        const songRes = await axios.get(songUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0' }
-        });
-        const $$ = cheerio.load(songRes.data);
-        
-        // Текст песни может быть в .song-text или в .chord (аккорды + текст)
-        let lyrics = $$('.song-text').text().trim();
-        if (!lyrics) {
-            lyrics = $$('.chord').text().trim();
-        }
-        return lyrics || null;
-    } catch (error) {
-        console.log(`⚠️ amdm.ru не дал текст для ${artist} - ${title}`);
-        return null;
-    }
-}
-
-// ============= ТЕКСТЫ ПЕСЕН (С ПОИСКОМ НА GENIUS) =============
-app.get('/api/lyrics', async (req, res) => {
-    const { artist, title } = req.query;
-    if (!artist || !title) {
-        return res.status(400).json({ error: 'Artist and title are required' });
-    }
-    
-    try {
-        const lyricsData = await fetchLyricsMultiSource(artist, title);
-        if (lyricsData) {
-            const lyrics = lyricsData.syncedLyrics || lyricsData.plainLyrics;
-            return res.json({ lyrics, source: 'multisource' });
-        } else {
-            return res.json({ lyrics: null, error: 'Lyrics not found' });
-        }
-    } catch (error) {
-        console.error('Ошибка получения текста:', error);
-        res.status(500).json({ error: error.message });
-    }
+// Загрузка аватара
+app.post('/api/user/avatar', requireAuth, uploadAvatar.single('avatar'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const avatarUrl = `/uploads/avatars/${req.file.filename}`;
+    await pool.query('UPDATE users SET profile_image_url = $1, updated_at = NOW() WHERE id = $2', [avatarUrl, req.userId]);
+    res.json({ avatarUrl });
 });
 
-app.get('/api/lyrics-lrc', async (req, res) => {
-    const { artist, title } = req.query;
-    console.log(`🎤 Запрос текста: ${artist} - ${title}`);
-
-    // 1. LRCLIB
-    try {
-        const lrcRes = await axios.get(`https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`);
-        if (lrcRes.data?.syncedLyrics) {
-            return res.json({ syncedLyrics: lrcRes.data.syncedLyrics });
-        }
-    } catch (e) { /* игнорируем */ }
-
-    // 2. amdm.ru (русские песни)
-    const amdmLyrics = await getLyricsFromAmdm(artist, title);
-    if (amdmLyrics) {
-        return res.json({ plainLyrics: amdmLyrics });
-    }
-
-    // 3. Genius (fallback)
-    try {
-        const geniusLyrics = await getLyricsFromGenius(artist, title);
-        if (geniusLyrics) {
-            return res.json({ plainLyrics: geniusLyrics });
-        }
-    } catch (e) { /* игнорируем */ }
-
-    return res.json({ plainLyrics: `Текст для "${title}" не найден.` });
+// Удаление аватара
+app.delete('/api/user/avatar', requireAuth, async (req, res) => {
+    await pool.query('UPDATE users SET profile_image_url = NULL, updated_at = NOW() WHERE id = $1', [req.userId]);
+    res.json({ success: true });
 });
 
-// ============= ДОПОЛНИТЕЛЬНЫЕ ИСТОЧНИКИ ТЕКСТОВ =============
+// ============= TRACKS ENDPOINTS =============
 
-// 1. LRCLIB (синхронизированные тексты)
-async function fetchFromLRCLIB(artist, title) {
-    try {
-        const url = `https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`;
-        const response = await axios.get(url, { timeout: 5000 });
-        if (response.data?.syncedLyrics) {
-            return { source: 'lrclib', syncedLyrics: response.data.syncedLyrics };
-        }
-        return null;
-    } catch (err) {
-        console.log(`   LRCLIB: ${err.message}`);
-        return null;
-    }
-}
-
-// 2. Lyrics.ovh (простой API, хорошо для русских песен)
-async function fetchFromLyricsOvh(artist, title) {
-    try {
-        const url = `https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`;
-        const response = await axios.get(url, { timeout: 5000 });
-        if (response.data?.lyrics && !response.data.lyrics.includes('No lyrics found')) {
-            // Очищаем от лишних переносов и лицензионных уведомлений
-            let lyrics = response.data.lyrics;
-            // Удаляем паразитные строки (например, "Paroles de la chanson...")
-            lyrics = lyrics.replace(/^Paroles de la chanson.*$/m, '');
-            lyrics = lyrics.replace(/^Lyrics of the song.*$/m, '');
-            return { source: 'lyrics.ovh', plainLyrics: lyrics.trim() };
-        }
-        return null;
-    } catch (err) {
-        console.log(`   Lyrics.ovh: ${err.message}`);
-        return null;
-    }
-}
-
-// 3. Musixmatch (требуется API ключ, но есть бесплатный тариф)
-// Регистрация: https://developer.musixmatch.com/
-// Бесплатный ключ даёт 2000 запросов в день.
-// Если нет ключа, этот источник можно пропустить.
-const MUSIXMATCH_API_KEY = process.env.MUSIXMATCH_API_KEY || ''; // Добавьте в .env
-
-async function fetchFromMusixmatch(artist, title) {
-    if (!MUSIXMATCH_API_KEY) return null;
-    try {
-        // Сначала ищем трек
-        const searchUrl = `https://api.musixmatch.com/ws/1.1/track.search?q_track=${encodeURIComponent(title)}&q_artist=${encodeURIComponent(artist)}&apikey=${MUSIXMATCH_API_KEY}&format=json`;
-        const searchRes = await axios.get(searchUrl, { timeout: 5000 });
-        const trackList = searchRes.data?.message?.body?.track_list;
-        if (!trackList || trackList.length === 0) return null;
-        const trackId = trackList[0].track.track_id;
-        // Получаем текст
-        const lyricsUrl = `https://api.musixmatch.com/ws/1.1/track.lyrics.get?track_id=${trackId}&apikey=${MUSIXMATCH_API_KEY}&format=json`;
-        const lyricsRes = await axios.get(lyricsUrl, { timeout: 5000 });
-        const lyricsBody = lyricsRes.data?.message?.body?.lyrics?.lyrics_body;
-        if (lyricsBody && !lyricsBody.includes('Instrumental')) {
-            // Очищаем от рекламных блоков (обычно после "... See you")
-            let clean = lyricsBody.split('...')[0].trim();
-            return { source: 'musixmatch', plainLyrics: clean };
-        }
-        return null;
-    } catch (err) {
-        console.log(`   Musixmatch: ${err.message}`);
-        return null;
-    }
-}
-
-// 4. Genius (уже есть, но используем как fallback)
-// ... ваша существующая функция getLyricsFromGenius
-
-async function fetchLyricsMultiSource(artist, title) {
-    console.log(`🔍 Поиск текста для: ${artist} - ${title}`);
-    
-    // Источники в порядке приоритета: сначала синхронизированные, потом обычные
-    const sources = [
-        { name: 'LRCLIB', fn: () => fetchFromLRCLIB(artist, title), wantsSynced: true },
-        { name: 'Lyrics.ovh', fn: () => fetchFromLyricsOvh(artist, title), wantsSynced: false },
-        { name: 'Musixmatch', fn: () => fetchFromMusixmatch(artist, title), wantsSynced: false },
-        { name: 'Genius', fn: () => getLyricsFromGenius(artist, title), wantsSynced: false } // предполагаем, что возвращает строку или null
-    ];
-    
-    for (const source of sources) {
-        try {
-            const result = await source.fn();
-            if (result) {
-                if (source.wantsSynced && result.syncedLyrics) {
-                    console.log(`✅ Найден синхронизированный текст через ${source.name}`);
-                    return { syncedLyrics: result.syncedLyrics };
-                } else if (!source.wantsSynced && (result.plainLyrics || (typeof result === 'string' && result))) {
-                    const plainText = result.plainLyrics || result;
-                    if (plainText && plainText.length > 50) {
-                        console.log(`✅ Найден обычный текст через ${source.name}`);
-                        return { plainLyrics: plainText };
-                    }
-                }
-            }
-        } catch (err) {
-            console.log(`   ${source.name} ошибка: ${err.message}`);
-        }
-    }
-    
-    console.log(`❌ Текст не найден ни в одном источнике`);
-    return null;
-}
-
-// ============= ТРЕКИ =============
+// Получить все треки
 app.get('/api/tracks', async (req, res) => {
     try {
         const result = await pool.query(`
@@ -733,7 +527,9 @@ app.get('/api/tracks', async (req, res) => {
             coverUrl: track.cover_url,
             duration: track.duration,
             play_count: track.play_count,
-            created_at: track.created_at
+            created_at: track.created_at,
+            genre: track.genre,
+            mood: track.mood
         }));
         
         res.json(tracks);
@@ -743,11 +539,13 @@ app.get('/api/tracks', async (req, res) => {
     }
 });
 
-// ============= ИЗБРАННОЕ =============
+// ============= FAVORITES ENDPOINTS =============
+
 app.get('/api/favorites', requireAuth, async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT t.* FROM tracks t
+            `SELECT t.*, a.name as artist_name FROM tracks t
+             LEFT JOIN artists a ON t.artist_id = a.id
              JOIN favorites f ON t.id = f.track_id
              WHERE f.user_id = $1`,
             [req.userId]
@@ -783,10 +581,8 @@ app.delete('/api/favorites/:trackId', requireAuth, async (req, res) => {
     }
 });
 
-// ============= ПЛЕЙЛИСТЫ =============
-// ============= ПЛЕЙЛИСТЫ =============
+// ============= PLAYLISTS ENDPOINTS =============
 
-// Получить все плейлисты пользователя
 app.get('/api/playlists', requireAuth, async (req, res) => {
     try {
         const result = await pool.query(
@@ -804,13 +600,8 @@ app.get('/api/playlists', requireAuth, async (req, res) => {
     }
 });
 
-// СОЗДАНИЕ ПЛЕЙЛИСТА
 app.post('/api/playlists', requireAuth, async (req, res) => {
     const { name, description } = req.body;
-    
-    console.log('📝 Creating playlist for user:', req.userId);
-    console.log('   Name:', name);
-    console.log('   Description:', description);
     
     if (!name || name.trim() === '') {
         return res.status(400).json({ error: 'Playlist name is required' });
@@ -823,8 +614,6 @@ app.post('/api/playlists', requireAuth, async (req, res) => {
              RETURNING id, user_id, name, description, created_at`,
             [req.userId, name.trim(), description || null]
         );
-        
-        console.log('✅ Playlist created:', result.rows[0]);
         res.status(201).json(result.rows[0]);
     } catch (error) {
         console.error('Error creating playlist:', error);
@@ -832,7 +621,6 @@ app.post('/api/playlists', requireAuth, async (req, res) => {
     }
 });
 
-// Получить конкретный плейлист с треками
 app.get('/api/playlists/:playlistId', requireAuth, async (req, res) => {
     const { playlistId } = req.params;
     
@@ -866,9 +654,40 @@ app.get('/api/playlists/:playlistId', requireAuth, async (req, res) => {
     }
 });
 
+app.post('/api/playlists/:playlistId/tracks', requireAuth, async (req, res) => {
+    const { playlistId } = req.params;
+    const { trackId } = req.body;
+    
+    try {
+        const playlistCheck = await pool.query(
+            'SELECT id FROM playlists WHERE id = $1 AND user_id = $2',
+            [playlistId, req.userId]
+        );
+        
+        if (playlistCheck.rows.length === 0) {
+            return res.status(404).json({ error: 'Playlist not found' });
+        }
+        
+        const positionResult = await pool.query(
+            'SELECT COALESCE(MAX(position), -1) + 1 as next_pos FROM playlist_tracks WHERE playlist_id = $1',
+            [playlistId]
+        );
+        const nextPosition = positionResult.rows[0].next_pos;
+        
+        await pool.query(
+            `INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) 
+             VALUES ($1, $2, $3, NOW()) 
+             ON CONFLICT (playlist_id, track_id) DO NOTHING`,
+            [playlistId, trackId, nextPosition]
+        );
+        
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error adding to playlist:', error);
+        res.status(500).json({ error: 'Failed to add track to playlist' });
+    }
+});
 
-
-// Удалить трек из плейлиста
 app.delete('/api/playlists/:playlistId/tracks/:trackId', requireAuth, async (req, res) => {
     const { playlistId, trackId } = req.params;
     
@@ -884,59 +703,319 @@ app.delete('/api/playlists/:playlistId/tracks/:trackId', requireAuth, async (req
     }
 });
 
-// Добавить трек в плейлист
-app.post('/api/playlists/:playlistId/tracks', requireAuth, async (req, res) => {
-    const { playlistId } = req.params;
-    const { trackId } = req.body;
-    
-    try {
-        // Проверяем, что плейлист принадлежит пользователю
-        const playlistCheck = await pool.query(
-            'SELECT id FROM playlists WHERE id = $1 AND user_id = $2',
-            [playlistId, req.userId]
-        );
-        
-        if (playlistCheck.rows.length === 0) {
-            return res.status(404).json({ error: 'Playlist not found' });
-        }
-        
-        // Получаем следующую позицию
-        const positionResult = await pool.query(
-            'SELECT COALESCE(MAX(position), -1) + 1 as next_pos FROM playlist_tracks WHERE playlist_id = $1',
-            [playlistId]
-        );
-        const nextPosition = positionResult.rows[0].next_pos;
-        
-        // Добавляем трек
-        await pool.query(
-            `INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) 
-             VALUES ($1, $2, $3, NOW()) 
-             ON CONFLICT (playlist_id, track_id) DO NOTHING`,
-            [playlistId, trackId, nextPosition]
-        );
-        
-        res.json({ success: true });
-    } catch (error) {
-        console.error('Error adding to playlist:', error);
-        res.status(500).json({ error: 'Failed to add track to playlist' });
-    }
-});
-
-// Удалить плейлист
 app.delete('/api/playlists/:playlistId', requireAuth, async (req, res) => {
     const { playlistId } = req.params;
     
     try {
         await pool.query('DELETE FROM playlist_tracks WHERE playlist_id = $1', [playlistId]);
         await pool.query('DELETE FROM playlists WHERE id = $1 AND user_id = $2', [playlistId, req.userId]);
-        
         res.json({ success: true });
     } catch (error) {
         console.error('Error deleting playlist:', error);
         res.status(500).json({ error: 'Failed to delete playlist' });
     }
 });
-// ============= ГЕНЕРАЦИЯ =============
+
+// ============= PLAYS (HISTORY) ENDPOINTS =============
+
+app.post('/api/plays', requireAuth, async (req, res) => {
+    const { trackId } = req.body;
+    try {
+        await pool.query(
+            'INSERT INTO plays (id, user_id, track_id, played_at) VALUES (gen_random_uuid(), $1, $2, NOW())',
+            [req.userId, trackId]
+        );
+        await pool.query('UPDATE tracks SET play_count = play_count + 1 WHERE id = $1', [trackId]);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error saving play:', error);
+        res.status(500).json({ error: 'Failed to save play history' });
+    }
+});
+
+app.get('/api/user/history', requireAuth, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                p.played_at,
+                t.id as track_id,
+                t.title,
+                t.duration,
+                t.genre,
+                t.mood,
+                a.name as artist_name,
+                t.cover_url
+            FROM plays p
+            JOIN tracks t ON p.track_id = t.id
+            LEFT JOIN artists a ON t.artist_id = a.id
+            WHERE p.user_id = $1
+            ORDER BY p.played_at DESC
+            LIMIT 50
+        `, [req.userId]);
+        
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error fetching history:', error);
+        res.status(500).json({ error: 'Failed to fetch listening history' });
+    }
+});
+
+// ============= STATS ENDPOINTS =============
+
+app.get('/api/user/stats', requireAuth, async (req, res) => {
+    try {
+        const tracksResult = await pool.query(
+            `SELECT COUNT(*) FROM tracks WHERE user_id = $1`,
+            [req.userId]
+        );
+        
+        const favoritesResult = await pool.query(
+            'SELECT COUNT(*) FROM favorites WHERE user_id = $1',
+            [req.userId]
+        );
+        
+        const playlistsResult = await pool.query(
+            'SELECT COUNT(*) FROM playlists WHERE user_id = $1',
+            [req.userId]
+        );
+        
+        const playsResult = await pool.query(
+            'SELECT COUNT(*) FROM plays WHERE user_id = $1',
+            [req.userId]
+        );
+        
+        res.json({
+            generatedTracks: parseInt(tracksResult.rows[0].count) || 0,
+            favorites: parseInt(favoritesResult.rows[0].count) || 0,
+            playlists: parseInt(playlistsResult.rows[0].count) || 0,
+            totalPlays: parseInt(playsResult.rows[0].count) || 0
+        });
+    } catch (error) {
+        console.error('Error fetching user stats:', error);
+        res.status(500).json({ error: 'Failed to get user stats' });
+    }
+});
+
+app.get('/api/user/listening-stats', requireAuth, async (req, res) => {
+    try {
+        const totalPlays = await pool.query(
+            'SELECT COUNT(*) FROM plays WHERE user_id = $1',
+            [req.userId]
+        );
+        
+        const topTracks = await pool.query(`
+            SELECT 
+                t.id,
+                t.title,
+                a.name as artist_name,
+                COUNT(*) as play_count
+            FROM plays p
+            JOIN tracks t ON p.track_id = t.id
+            LEFT JOIN artists a ON t.artist_id = a.id
+            WHERE p.user_id = $1
+            GROUP BY t.id, t.title, a.name
+            ORDER BY play_count DESC
+            LIMIT 5
+        `, [req.userId]);
+        
+        const topGenres = await pool.query(`
+            SELECT 
+                t.genre,
+                COUNT(*) as play_count
+            FROM plays p
+            JOIN tracks t ON p.track_id = t.id
+            WHERE p.user_id = $1 AND t.genre IS NOT NULL AND t.genre != ''
+            GROUP BY t.genre
+            ORDER BY play_count DESC
+            LIMIT 3
+        `, [req.userId]);
+        
+        const topArtists = await pool.query(`
+            SELECT 
+                a.name,
+                COUNT(*) as play_count
+            FROM plays p
+            JOIN tracks t ON p.track_id = t.id
+            LEFT JOIN artists a ON t.artist_id = a.id
+            WHERE p.user_id = $1 AND a.name IS NOT NULL
+            GROUP BY a.name
+            ORDER BY play_count DESC
+            LIMIT 3
+        `, [req.userId]);
+        
+        const last7Days = await pool.query(`
+            SELECT 
+                DATE(played_at) as date,
+                COUNT(*) as plays
+            FROM plays
+            WHERE user_id = $1 AND played_at > NOW() - INTERVAL '7 days'
+            GROUP BY DATE(played_at)
+            ORDER BY date DESC
+        `, [req.userId]);
+        
+        res.json({
+            totalPlays: parseInt(totalPlays.rows[0].count) || 0,
+            topTracks: topTracks.rows,
+            topGenres: topGenres.rows,
+            topArtists: topArtists.rows,
+            last7Days: last7Days.rows
+        });
+    } catch (error) {
+        console.error('Error fetching listening stats:', error);
+        res.status(500).json({ error: 'Failed to fetch listening statistics' });
+    }
+});
+
+// ============= RECOMMENDATIONS ENDPOINTS =============
+app.get('/api/recommendations', requireAuth, async (req, res) => {
+    try {
+        // Получаем жанры которые слушал пользователь
+        const userGenres = await pool.query(`
+            SELECT DISTINCT t.genre
+            FROM plays p
+            JOIN tracks t ON p.track_id = t.id
+            WHERE p.user_id = $1 AND t.genre IS NOT NULL
+            LIMIT 5
+        `, [req.userId]);
+        
+        if (userGenres.rows.length === 0) {
+            // Если ничего не слушал — просто популярные треки
+            const popular = await pool.query(`
+                SELECT 
+                    t.id as track_id,
+                    t.title,
+                    a.name as artist_name,
+                    t.genre,
+                    t.mood,
+                    t.tempo,
+                    t.duration,
+                    t.cover_url,
+                    'Popular' as reason
+                FROM tracks t
+                LEFT JOIN artists a ON t.artist_id = a.id
+                ORDER BY t.play_count DESC
+                LIMIT 20
+            `);
+            
+            return res.json(popular.rows);
+        }
+        
+        // Рекомендуем треки похожего жанра
+        const genres = userGenres.rows.map(r => r.genre);
+        const recommended = await pool.query(`
+            SELECT 
+                t.id as track_id,
+                t.title,
+                a.name as artist_name,
+                t.genre,
+                t.mood,
+                t.tempo,
+                t.duration,
+                t.cover_url,
+                'Based on your taste' as reason
+            FROM tracks t
+            LEFT JOIN artists a ON t.artist_id = a.id
+            WHERE t.genre = ANY($1)
+            AND t.id NOT IN (
+                SELECT track_id FROM plays WHERE user_id = $2
+            )
+            ORDER BY t.play_count DESC
+            LIMIT 20
+        `, [genres, req.userId]);
+        
+        res.json(recommended.rows);
+    } catch (error) {
+        console.error('Error fetching recommendations:', error);
+        res.status(500).json({ error: 'Failed to get recommendations' });
+    }
+});
+app.get('/api/recommendations', requireAuth, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT r.*, t.title, a.name as artist_name, t.genre, t.mood, t.tempo, t.duration, t.cover_url
+            FROM recommendations r
+            JOIN tracks t ON r.track_id = t.id
+            JOIN artists a ON t.artist_id = a.id
+            WHERE r.user_id = $1 AND r.expires_at > NOW()
+            ORDER BY r.score DESC
+            LIMIT 30
+        `, [req.userId]);
+        
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error fetching recommendations:', error);
+        res.status(500).json({ error: 'Failed to get recommendations' });
+    }
+});
+
+app.post('/api/recommendations/refresh', requireAuth, async (req, res) => {
+    res.json({ success: true, message: 'Recommendations refresh started' });
+});
+
+// ============= LYRICS ENDPOINTS =============
+
+app.get('/api/lyrics', async (req, res) => {
+    const { artist, title } = req.query;
+    if (!artist || !title) {
+        return res.status(400).json({ error: 'Artist and title are required' });
+    }
+    
+    try {
+        const lyricsData = await fetchLyricsMultiSource(artist, title);
+        if (lyricsData) {
+            const lyrics = lyricsData.syncedLyrics || lyricsData.plainLyrics;
+            return res.json({ lyrics, source: 'multisource' });
+        } else {
+            return res.json({ lyrics: null, error: 'Lyrics not found' });
+        }
+    } catch (error) {
+        console.error('Ошибка получения текста:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/lyrics-lrc', async (req, res) => {
+    const { artist, title } = req.query;
+    console.log(`🎤 Запрос текста: ${artist} - ${title}`);
+
+    try {
+        const lrcRes = await axios.get(`https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`);
+        if (lrcRes.data?.syncedLyrics) {
+            return res.json({ syncedLyrics: lrcRes.data.syncedLyrics });
+        }
+    } catch (e) { /* игнорируем */ }
+    
+    const amdmLyrics = await getLyricsFromAmdm(artist, title);
+    if (amdmLyrics) {
+        return res.json({ plainLyrics: amdmLyrics });
+    }
+    
+    try {
+        const geniusLyrics = await getLyricsFromGenius(artist, title);
+        if (geniusLyrics) {
+            return res.json({ plainLyrics: geniusLyrics });
+        }
+    } catch (e) { /* игнорируем */ }
+
+    return res.json({ plainLyrics: `Текст для "${title}" не найден.` });
+});
+
+// ============= ARTIST ENDPOINTS =============
+
+app.get('/api/artist/:id', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT id, name, image_url FROM artists WHERE id = $1', [req.params.id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Artist not found' });
+        }
+        res.json(result.rows[0]);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============= GENERATE ENDPOINT =============
+
 app.post('/api/generate', requireAuth, async (req, res) => {
     const { genre, mood, tempo, instruments, prompt } = req.body;
     
@@ -965,162 +1044,19 @@ app.post('/api/generate', requireAuth, async (req, res) => {
     }
 });
 
-// ============= ЗАГРУЗКА АВАТАРА =============
+// ============= USER PREFERENCES =============
 
-
-const avatarStorage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const dir = path.join(__dirname, 'uploads/avatars');
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        cb(null, dir);
-    },
-    filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname);
-        cb(null, `avatar-${req.userId}${ext}`);
-    }
-});
-
-const uploadAvatar = multer({
-    storage: avatarStorage,
-    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
-    fileFilter: (req, file, cb) => {
-        if (file.mimetype.startsWith('image/')) cb(null, true);
-        else cb(new Error('Only images allowed'), false);
-    }
-});
-
-// Раздача статики для папки uploads (если ещё нет)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// Эндпоинт для загрузки аватара
-app.post('/api/user/avatar', requireAuth, uploadAvatar.single('avatar'), async (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    const avatarUrl = `/uploads/avatars/${req.file.filename}`;
-    await pool.query('UPDATE users SET profile_image_url = $1, updated_at = NOW() WHERE id = $2', [avatarUrl, req.userId]);
-    res.json({ avatarUrl });
-});
-
-app.delete('/api/user/avatar', requireAuth, async (req, res) => {
-    await pool.query('UPDATE users SET profile_image_url = NULL, updated_at = NOW() WHERE id = $1', [req.userId]);
-    res.json({ success: true });
-});
-
-// ============= ИСТОРИЯ ПРОСЛУШИВАНИЙ =============
-
-// Получить историю прослушиваний (последние 50)
-app.get('/api/user/history', requireAuth, async (req, res) => {
+app.get('/api/user/preferences', requireAuth, async (req, res) => {
     try {
         const result = await pool.query(`
-            SELECT 
-                p.played_at,
-                t.id as track_id,
-                t.title,
-                t.duration,
-                t.genre,
-                t.mood,
-                a.name as artist_name,
-                t.cover_url
-            FROM plays p
-            JOIN tracks t ON p.track_id = t.id
-            LEFT JOIN artists a ON t.artist_id = a.id
-            WHERE p.user_id = $1
-            ORDER BY p.played_at DESC
-            LIMIT 50
+            SELECT preferred_genres, preferred_artists, preferred_moods, min_tempo, max_tempo
+            FROM user_preferences
+            WHERE user_id = $1
         `, [req.userId]);
         
-        res.json(result.rows);
+        res.json(result.rows[0] || {});
     } catch (error) {
-        console.error('Error fetching history:', error);
-        res.status(500).json({ error: 'Failed to fetch listening history' });
-    }
-});
-
-// Получить расширенную статистику прослушиваний
-app.get('/api/user/listening-stats', requireAuth, async (req, res) => {
-    try {
-        // Общее количество прослушиваний
-        const totalPlays = await pool.query(
-            'SELECT COUNT(*) FROM plays WHERE user_id = $1',
-            [req.userId]
-        );
-        
-        // Топ-5 треков по количеству прослушиваний
-        const topTracks = await pool.query(`
-            SELECT 
-                t.id,
-                t.title,
-                a.name as artist_name,
-                COUNT(*) as play_count
-            FROM plays p
-            JOIN tracks t ON p.track_id = t.id
-            LEFT JOIN artists a ON t.artist_id = a.id
-            WHERE p.user_id = $1
-            GROUP BY t.id, t.title, a.name
-            ORDER BY play_count DESC
-            LIMIT 5
-        `, [req.userId]);
-        
-        // Топ-3 жанра
-        const topGenres = await pool.query(`
-            SELECT 
-                t.genre,
-                COUNT(*) as play_count
-            FROM plays p
-            JOIN tracks t ON p.track_id = t.id
-            WHERE p.user_id = $1 AND t.genre IS NOT NULL AND t.genre != ''
-            GROUP BY t.genre
-            ORDER BY play_count DESC
-            LIMIT 3
-        `, [req.userId]);
-        
-        // Топ-3 исполнителя
-        const topArtists = await pool.query(`
-            SELECT 
-                a.name,
-                COUNT(*) as play_count
-            FROM plays p
-            JOIN tracks t ON p.track_id = t.id
-            LEFT JOIN artists a ON t.artist_id = a.id
-            WHERE p.user_id = $1 AND a.name IS NOT NULL
-            GROUP BY a.name
-            ORDER BY play_count DESC
-            LIMIT 3
-        `, [req.userId]);
-        
-        // Статистика по дням (последние 7 дней)
-        const last7Days = await pool.query(`
-            SELECT 
-                DATE(played_at) as date,
-                COUNT(*) as plays
-            FROM plays
-            WHERE user_id = $1 AND played_at > NOW() - INTERVAL '7 days'
-            GROUP BY DATE(played_at)
-            ORDER BY date DESC
-        `, [req.userId]);
-        
-        res.json({
-            totalPlays: parseInt(totalPlays.rows[0].count) || 0,
-            topTracks: topTracks.rows,
-            topGenres: topGenres.rows,
-            topArtists: topArtists.rows,
-            last7Days: last7Days.rows
-        });
-    } catch (error) {
-        console.error('Error fetching listening stats:', error);
-        res.status(500).json({ error: 'Failed to fetch listening statistics' });
-    }
-});
-
-// ============= ИСПОЛНИТЕЛИ =============
-app.get('/api/artist/:id', async (req, res) => {
-    try {
-        const result = await pool.query('SELECT id, name, image_url FROM artists WHERE id = $1', [req.params.id]);
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Artist not found' });
-        }
-        res.json(result.rows[0]);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: 'Failed to get preferences' });
     }
 });
 
@@ -1129,6 +1065,10 @@ app.listen(port, () => {
     console.log(`🎵 MelodixAI API Server running on http://localhost:${port}`);
     console.log(`   POST /api/auth/register - Register`);
     console.log(`   POST /api/auth/login - Login`);
-    console.log(`   GET  /api/lyrics?artist=&title= - Get lyrics from Genius`);
+    console.log(`   POST /api/auth/logout - Logout`);
     console.log(`   GET  /api/tracks - Get tracks`);
+    console.log(`   GET  /api/lyrics - Get lyrics`);
+    console.log(`   GET  /api/playlists - Get playlists`);
+    console.log(`   GET  /api/favorites - Get favorites`);
+    console.log(`   🔐 JWT + httpOnly cookies enabled`);
 });

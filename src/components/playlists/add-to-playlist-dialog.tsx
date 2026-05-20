@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Plus, Check, Loader2, ListMusic } from "lucide-react";
-import { useAuth } from "@/contexts/AuthContext";
-import { useToast } from "@/hooks/use-toast";
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
+import { ListMusic, Loader2, Plus } from 'lucide-react';
 
 interface Playlist {
   id: string;
@@ -14,135 +15,184 @@ interface Playlist {
 interface AddToPlaylistDialogProps {
   trackId: string;
   trackTitle: string;
-  trigger?: React.ReactNode;
+  trigger: React.ReactNode;
 }
+
+const API_URL = "http://localhost:3001/api";
 
 export function AddToPlaylistDialog({ trackId, trackTitle, trigger }: AddToPlaylistDialogProps) {
   const { token } = useAuth();
   const { toast } = useToast();
+  
+  const [isOpen, setIsOpen] = useState(false);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isOpen, setIsOpen] = useState(false);
-  const [addingTo, setAddingTo] = useState<string | null>(null);
+  const [isAdding, setIsAdding] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const loadedRef = useRef(false);
 
-  useEffect(() => {
-    if (isOpen) {
-      fetchPlaylists();
-    }
-  }, [isOpen]);
+  // ✅ Мемоизируем authFetch с зависимостью от token
+  const authFetch = useCallback(async (url: string, options: RequestInit = {}) => {
+    return fetch(url, {
+      ...options,
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        ...options.headers,
+      },
+    });
+  }, [token]);
 
-  const fetchPlaylists = async () => {
+  // ✅ Загружаем плейлисты только при открытии диалога
+  const loadPlaylists = useCallback(async () => {
+    if (loadedRef.current && isOpen) return; // Если уже загружены и диалог открыт — не перезагружаем
+
     setIsLoading(true);
     try {
-      const response = await fetch('http://localhost:3001/api/playlists', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
+      const res = await authFetch(`${API_URL}/playlists`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       
-      if (response.ok) {
-        const data = await response.json();
-        setPlaylists(data);
-      }
+      const data = await res.json();
+      setPlaylists(Array.isArray(data) ? data : []);
+      loadedRef.current = true;
+      
+      console.log('✅ Плейлисты загружены:', data);
     } catch (error) {
-      console.error('Error fetching playlists:', error);
+      console.error('Error loading playlists:', error);
+      toast({
+        title: "Ошибка",
+        description: "Не удалось загрузить плейлисты",
+        variant: "destructive",
+      });
+      setPlaylists([]);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [authFetch, isOpen, toast]);
 
-  const addToPlaylist = async (playlistId: string) => {
-    setAddingTo(playlistId);
+  // ✅ Загружаем плейлисты при открытии диалога
+  useEffect(() => {
+    if (isOpen) {
+      loadPlaylists();
+    }
+  }, [isOpen, loadPlaylists]);
+
+  // Фильтруем плейлисты по поиску
+  const filteredPlaylists = playlists.filter(pl =>
+    pl.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  // ✅ Добавляем трек в плейлист
+  const handleAddToPlaylist = async (playlistId: string) => {
+    setIsAdding(playlistId);
     try {
-      const response = await fetch(`http://localhost:3001/api/playlists/${playlistId}/tracks`, {
+      const res = await authFetch(`${API_URL}/playlists/${playlistId}/tracks`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
         body: JSON.stringify({ trackId }),
       });
 
-      if (response.ok) {
-        toast({
-          title: "Успех!",
-          description: `"${trackTitle}" добавлен в плейлист`,
-        });
-        setIsOpen(false);
-      } else {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to add');
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'Failed to add track');
       }
+
+      toast({
+        title: "Успех",
+        description: `"${trackTitle}" добавлен в плейлист`,
+      });
+
+      // Обновляем список плейлистов (перезагружаем)
+      loadedRef.current = false;
+      await loadPlaylists();
     } catch (error) {
+      console.error('Error adding track to playlist:', error);
       toast({
         title: "Ошибка",
-        description: "Не удалось добавить трек в плейлист",
+        description: error instanceof Error ? error.message : "Не удалось добавить трек",
         variant: "destructive",
       });
     } finally {
-      setAddingTo(null);
+      setIsAdding(null);
     }
   };
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogTrigger asChild>
-        {trigger || (
-          <Button variant="ghost" size="sm" className="text-gray-400 hover:text-white">
-            <Plus className="w-4 h-4 mr-1" />
-            В плейлист
-          </Button>
-        )}
+        {trigger}
       </DialogTrigger>
-      <DialogContent className="bg-gray-900 border-gray-700 max-w-md">
+      <DialogContent className="bg-card border-border/50">
         <DialogHeader>
-          <DialogTitle className="text-white text-xl">Добавить в плейлист</DialogTitle>
+          <DialogTitle>Добавить в плейлист</DialogTitle>
         </DialogHeader>
-        
-        <div className="mt-2">
-          <p className="text-gray-400 text-sm mb-4">
-            Добавить трек <span className="text-white font-medium">"{trackTitle}"</span> в плейлист:
-          </p>
-          
-          {isLoading ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="w-6 h-6 animate-spin text-primary" />
-            </div>
-          ) : playlists.length === 0 ? (
-            <div className="text-center py-8">
-              <ListMusic className="w-12 h-12 text-gray-500 mx-auto mb-3" />
-              <p className="text-gray-400 mb-4">У вас нет плейлистов</p>
-              <Button onClick={() => {
-                setIsOpen(false);
-                window.location.href = '/playlists';
-              }}>
-                Создать плейлист
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {playlists.map((playlist) => (
+
+        <div className="space-y-4">
+          {/* Поиск */}
+          <div className="relative">
+            <Input
+              placeholder="Поиск плейлиста..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="bg-secondary border-border/50"
+            />
+          </div>
+
+          {/* Список плейлистов */}
+          <div className="space-y-2 max-h-80 overflow-y-auto">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-5 h-5 animate-spin text-primary" />
+              </div>
+            ) : filteredPlaylists.length === 0 ? (
+              <div className="text-center py-8">
+                <ListMusic className="w-8 h-8 mx-auto text-muted-foreground/50 mb-2" />
+                <p className="text-sm text-muted-foreground">
+                  {playlists.length === 0 ? 'Нет плейлистов' : 'Плейлисты не найдены'}
+                </p>
+              </div>
+            ) : (
+              filteredPlaylists.map((playlist) => (
                 <button
                   key={playlist.id}
-                  onClick={() => addToPlaylist(playlist.id)}
-                  disabled={addingTo === playlist.id}
-                  className="w-full text-left p-3 rounded-lg bg-gray-800 hover:bg-gray-700 transition-all flex items-center justify-between group"
+                  onClick={() => handleAddToPlaylist(playlist.id)}
+                  disabled={isAdding === playlist.id}
+                  className="w-full text-left p-3 rounded-lg bg-secondary/50 hover:bg-secondary transition disabled:opacity-50"
                 >
-                  <div className="flex-1">
-                    <p className="text-white font-medium">{playlist.name}</p>
-                    {playlist.description && (
-                      <p className="text-gray-400 text-sm line-clamp-1">{playlist.description}</p>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3 flex-1">
+                      <ListMusic className="w-4 h-4 text-primary shrink-0" />
+                      <div className="min-w-0">
+                        <div className="font-medium truncate">{playlist.name}</div>
+                        {playlist.description && (
+                          <div className="text-xs text-muted-foreground truncate">
+                            {playlist.description}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {isAdding === playlist.id && (
+                      <Loader2 className="w-4 h-4 animate-spin text-primary ml-2" />
                     )}
                   </div>
-                  {addingTo === playlist.id ? (
-                    <Loader2 className="w-5 h-5 animate-spin text-primary" />
-                  ) : (
-                    <Plus className="w-5 h-5 text-gray-500 group-hover:text-primary transition-colors" />
-                  )}
                 </button>
-              ))}
-            </div>
-          )}
+              ))
+            )}
+          </div>
+
+          {/* Создать новый плейлист (опционально) */}
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => {
+              setIsOpen(false);
+              // Перенаправляем в плейлисты если нужно создать новый
+              window.location.href = '/playlists';
+            }}
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Создать новый плейлист
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

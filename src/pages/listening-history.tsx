@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Layout } from "@/components/layout";
 import { useAuth } from "@/contexts/AuthContext";
 import { Clock, Music2, Calendar, TrendingUp } from "lucide-react";
@@ -24,50 +24,140 @@ interface ListeningStats {
     last7Days: { date: string; plays: number }[];
 }
 
+const API_URL = "http://localhost:3001/api";
+
 export default function ListeningHistory() {
-    const { token, isAuthenticated } = useAuth();
+    const { user, token, isLoading: authLoading } = useAuth();
     const [history, setHistory] = useState<HistoryItem[]>([]);
     const [stats, setStats] = useState<ListeningStats | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const historyLoadedRef = useRef(false);
+    const statsLoadedRef = useRef(false);
+    const abortControllerRef = useRef<AbortController | null>(null);
 
-    useEffect(() => {
-        if (isAuthenticated && token) {
-            fetchHistory();
-            fetchStats();
-        }
-    }, [isAuthenticated, token]);
+    // ✅ Мемоизируем authFetch с зависимостью от token
+    const authFetch = useCallback(async (url: string, options: RequestInit = {}) => {
+        const response = await fetch(url, {
+            ...options,
+            credentials: "include",
+            headers: {
+                "Content-Type": "application/json",
+                ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+                ...(options.headers || {}),
+            },
+        });
 
-    const fetchHistory = async () => {
+        let data: any = null;
+        const text = await response.text();
+
         try {
-            const res = await fetch('http://localhost:3001/api/user/history', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.ok) {
-                const data = await res.json();
-                setHistory(data);
+            data = text ? JSON.parse(text) : null;
+        } catch {
+            data = null;
+        }
+
+        if (!response.ok) {
+            const msg = data?.error || "Request failed";
+            if (response.status === 401) {
+                console.log("Session expired, redirecting to login...");
+                window.location.href = "/login";
+                throw new Error("UNAUTHORIZED");
             }
+            throw new Error(msg);
+        }
+
+        return data;
+    }, [token]);
+
+    // =========================================================
+    // LOAD HISTORY — только один раз
+    // =========================================================
+    const fetchHistory = useCallback(async () => {
+        if (historyLoadedRef.current) return;
+        historyLoadedRef.current = true;
+
+        try {
+            const data = await authFetch(`${API_URL}/user/history`);
+            setHistory(data || []);
         } catch (error) {
-            console.error('Error fetching history:', error);
-        } finally {
+            if (error instanceof Error && error.message !== "UNAUTHORIZED") {
+                console.error('Error fetching history:', error);
+            }
+        }
+    }, [authFetch]);
+
+    // =========================================================
+    // LOAD STATS — только один раз
+    // =========================================================
+    const fetchStats = useCallback(async () => {
+        if (statsLoadedRef.current) return;
+        statsLoadedRef.current = true;
+
+        try {
+            const data = await authFetch(`${API_URL}/user/listening-stats`);
+            setStats(data || null);
+        } catch (error) {
+            if (error instanceof Error && error.message !== "UNAUTHORIZED") {
+                console.error('Error fetching stats:', error);
+            }
+        }
+    }, [authFetch]);
+
+    // =========================================================
+    // INIT — загружаем только один раз при монтировании
+    // =========================================================
+    useEffect(() => {
+        if (!authLoading && user) {
+            Promise.all([fetchHistory(), fetchStats()]).finally(() => {
+                setIsLoading(false);
+            });
+        } else if (!authLoading && !user) {
             setIsLoading(false);
         }
-    };
+    }, [authLoading, user, fetchHistory, fetchStats]);
 
-    const fetchStats = async () => {
-        try {
-            const res = await fetch('http://localhost:3001/api/user/listening-stats', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (res.ok) {
-                const data = await res.json();
-                setStats(data);
+    // Cleanup при размонтировании
+    useEffect(() => {
+        return () => {
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
             }
-        } catch (error) {
-            console.error('Error fetching stats:', error);
-        }
+        };
+    }, []);
+
+    // =========================================================
+    // FORMAT DURATION
+    // =========================================================
+    const formatDuration = (seconds: number) => {
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
 
-    if (!isAuthenticated) {
+    // =========================================================
+    // FORMAT DATE
+    // =========================================================
+    const formatDate = (dateStr: string) => {
+        return format(new Date(dateStr), "dd MMMM yyyy, HH:mm", { locale: ru });
+    };
+
+    // =========================================================
+    // LOADING STATE
+    // =========================================================
+    if (authLoading || isLoading) {
+        return (
+            <Layout>
+                <div className="flex items-center justify-center h-full min-h-[400px]">
+                    <Clock className="w-8 h-8 animate-spin text-primary" />
+                </div>
+            </Layout>
+        );
+    }
+
+    // =========================================================
+    // NOT LOGGED IN
+    // =========================================================
+    if (!user) {
         return (
             <Layout>
                 <div className="text-center py-20">
@@ -79,16 +169,9 @@ export default function ListeningHistory() {
         );
     }
 
-    const formatDate = (dateStr: string) => {
-        return format(new Date(dateStr), "dd MMMM yyyy, HH:mm", { locale: ru });
-    };
-
-    const formatDuration = (seconds: number) => {
-        const mins = Math.floor(seconds / 60);
-        const secs = seconds % 60;
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
-    };
-
+    // =========================================================
+    // UI
+    // =========================================================
     return (
         <Layout>
             <div className="max-w-5xl mx-auto space-y-8 pb-20">
@@ -143,7 +226,10 @@ export default function ListeningHistory() {
                                     <div key={day.date} className="flex justify-between items-center">
                                         <span className="text-sm">{format(new Date(day.date), "EEEE", { locale: ru })}</span>
                                         <div className="flex-1 mx-4 h-2 bg-secondary rounded-full overflow-hidden">
-                                            <div className="h-full bg-primary rounded-full" style={{ width: `${(day.plays / Math.max(...stats.last7Days.map(d => d.plays), 1)) * 100}%` }}></div>
+                                            <div 
+                                                className="h-full bg-primary rounded-full" 
+                                                style={{ width: `${(day.plays / Math.max(...stats.last7Days.map(d => d.plays), 1)) * 100}%` }}
+                                            />
                                         </div>
                                         <span className="text-sm text-muted-foreground">{day.plays}</span>
                                     </div>
@@ -154,13 +240,7 @@ export default function ListeningHistory() {
                 )}
 
                 {/* Список прослушиваний */}
-                {isLoading ? (
-                    <div className="space-y-4">
-                        {[1,2,3].map(i => (
-                            <div key={i} className="bg-card rounded-xl p-4 animate-pulse h-20" />
-                        ))}
-                    </div>
-                ) : history.length === 0 ? (
+                {history.length === 0 ? (
                     <div className="text-center py-12 bg-card rounded-2xl border border-border/50">
                         <Music2 className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
                         <p className="text-muted-foreground">Вы ещё не слушали треки</p>
@@ -171,7 +251,11 @@ export default function ListeningHistory() {
                             <div key={idx} className="bg-card rounded-xl p-4 border border-border/50 flex items-center gap-4 hover:bg-secondary/30 transition">
                                 <div className="w-12 h-12 rounded-lg bg-secondary overflow-hidden shrink-0">
                                     {item.cover_url ? (
-                                        <img src={item.cover_url} alt="" className="w-full h-full object-cover" />
+                                        <img 
+                                            src={item.cover_url.startsWith('http') ? item.cover_url : `http://localhost:3001${item.cover_url}`} 
+                                            alt="" 
+                                            className="w-full h-full object-cover" 
+                                        />
                                     ) : (
                                         <div className="w-full h-full flex items-center justify-center">
                                             <Music2 className="w-5 h-5 text-muted-foreground" />
@@ -180,10 +264,9 @@ export default function ListeningHistory() {
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <div className="font-medium truncate">{item.title}</div>
-                                    <div className="text-sm text-muted-foreground truncate">{item.artist_name || "Unknown Artist"}</div>
+                                    <div className="text-sm text-muted-foreground truncate">{item.artist_name}</div>
                                     <div className="text-xs text-muted-foreground/70 mt-1 flex gap-3">
                                         <span>{item.genre || "—"}</span>
-                                        <span>{item.mood || "—"}</span>
                                         <span>{formatDuration(item.duration)}</span>
                                     </div>
                                 </div>

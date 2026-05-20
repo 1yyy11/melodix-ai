@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { Layout } from "@/components/layout";
-import { useGetPlaylists, useCreatePlaylist } from "@workspace/api-client-react";
 import { ListMusic, Plus, Music, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -8,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { useLocation } from "wouter";
 
 interface Playlist {
   id: string;
@@ -18,9 +18,12 @@ interface Playlist {
   created_at: string;
 }
 
+const API_URL = "http://localhost:3001/api";
+
 export default function Playlists() {
-  const { token } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
@@ -28,38 +31,67 @@ export default function Playlists() {
   const [newPlaylistDescription, setNewPlaylistDescription] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
-  // Загрузка плейлистов
-  useEffect(() => {
-    fetchPlaylists();
-  }, [token]);
+  // =========================================================
+  // SAFE FETCH (session-based)
+  // =========================================================
+  const api = async (url: string, options: RequestInit = {}) => {
+    const res = await fetch(url, {
+      ...options,
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {}),
+      },
+    });
 
+    let data: any = null;
+    const text = await res.text();
+
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = null;
+    }
+
+    if (!res.ok) {
+      const msg = data?.error || "Request failed";
+      if (res.status === 401) {
+        throw new Error("UNAUTHORIZED");
+      }
+      throw new Error(msg);
+    }
+
+    return data;
+  };
+
+  // =========================================================
+  // LOAD PLAYLISTS
+  // =========================================================
   const fetchPlaylists = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch('http://localhost:3001/api/playlists', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setPlaylists(data);
+      const data = await api(`${API_URL}/playlists`);
+      setPlaylists(data || []);
+    } catch (error: any) {
+      if (error.message === "UNAUTHORIZED") {
+        console.warn("⚠️ Не авторизован");
+        setPlaylists([]);
       } else {
-        console.error('Failed to fetch playlists');
+        console.error('Error fetching playlists:', error);
+        toast({
+          title: "Ошибка",
+          description: "Не удалось загрузить плейлисты",
+          variant: "destructive",
+        });
       }
-    } catch (error) {
-      console.error('Error fetching playlists:', error);
-      toast({
-        title: "Ошибка",
-        description: "Не удалось загрузить плейлисты",
-        variant: "destructive",
-      });
     } finally {
       setIsLoading(false);
     }
   };
 
+  // =========================================================
+  // CREATE PLAYLIST
+  // =========================================================
   const handleCreatePlaylist = async () => {
     if (!newPlaylistName.trim()) {
       toast({
@@ -72,32 +104,22 @@ export default function Playlists() {
 
     setIsCreating(true);
     try {
-      const response = await fetch('http://localhost:3001/api/playlists', {
+      const newPlaylist = await api(`${API_URL}/playlists`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
         body: JSON.stringify({
           name: newPlaylistName,
           description: newPlaylistDescription,
         }),
       });
 
-      if (response.ok) {
-        const newPlaylist = await response.json();
-        setPlaylists([newPlaylist, ...playlists]);
-        setNewPlaylistName("");
-        setNewPlaylistDescription("");
-        setIsDialogOpen(false);
-        toast({
-          title: "Успех",
-          description: "Плейлист создан",
-        });
-      } else {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to create playlist");
-      }
+      setPlaylists([newPlaylist, ...playlists]);
+      setNewPlaylistName("");
+      setNewPlaylistDescription("");
+      setIsDialogOpen(false);
+      toast({
+        title: "Успех",
+        description: "Плейлист создан",
+      });
     } catch (error) {
       console.error('Error creating playlist:', error);
       toast({
@@ -110,7 +132,21 @@ export default function Playlists() {
     }
   };
 
-  if (isLoading) {
+  // =========================================================
+  // INIT
+  // =========================================================
+  useEffect(() => {
+    if (!authLoading && user) {
+      fetchPlaylists();
+    } else if (!authLoading && !user) {
+      setIsLoading(false);
+    }
+  }, [authLoading, user]);
+
+  // =========================================================
+  // LOADING STATE
+  // =========================================================
+  if (authLoading || isLoading) {
     return (
       <Layout>
         <div className="flex items-center justify-center h-full min-h-[400px]">
@@ -120,6 +156,24 @@ export default function Playlists() {
     );
   }
 
+  // =========================================================
+  // NOT LOGGED IN
+  // =========================================================
+  if (!user) {
+    return (
+      <Layout>
+        <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center">
+          <ListMusic className="w-24 h-24 text-gray-500 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold text-white mb-2">Войдите в аккаунт</h2>
+          <p className="text-gray-400 mb-6">Чтобы управлять плейлистами</p>
+        </div>
+      </Layout>
+    );
+  }
+
+  // =========================================================
+  // UI
+  // =========================================================
   return (
     <Layout>
       <div className="p-6">
@@ -136,13 +190,13 @@ export default function Playlists() {
                 Создать плейлист
               </Button>
             </DialogTrigger>
-           <DialogContent className="bg-gray-900 border-gray-700" aria-describedby="playlist-dialog-description">
+            <DialogContent className="bg-gray-900 border-gray-700" aria-describedby="playlist-dialog-description">
               <DialogHeader>
-  <DialogTitle className="text-white">Создать плейлист</DialogTitle>
-  <div id="playlist-dialog-description" className="sr-only">
-    Заполните форму для создания нового плейлиста
-  </div>
-</DialogHeader>
+                <DialogTitle className="text-white">Создать плейлист</DialogTitle>
+                <div id="playlist-dialog-description" className="sr-only">
+                  Заполните форму для создания нового плейлиста
+                </div>
+              </DialogHeader>
               <div className="space-y-4 mt-4">
                 <div>
                   <label className="text-sm text-gray-300 block mb-2">Название</label>
@@ -202,7 +256,7 @@ export default function Playlists() {
               <div
                 key={playlist.id}
                 className="bg-gray-800/50 rounded-lg border border-gray-700 p-4 hover:bg-gray-800 transition cursor-pointer"
-                onClick={() => window.location.href = `/playlist/${playlist.id}`}
+                onClick={() => setLocation(`/playlist/${playlist.id}`)}
               >
                 <div className="flex items-start justify-between mb-3">
                   <div className="bg-primary/20 p-3 rounded-lg">

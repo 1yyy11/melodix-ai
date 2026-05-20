@@ -1,19 +1,21 @@
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
-import { useAuth } from "@/hooks/useAuth";
-import { useState, useEffect } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { TrackCard } from "@/components/tracks/track-card";
 import { Library as LibraryIcon, Search, SlidersHorizontal } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
 export default function Library() {
   const [location, setLocation] = useLocation();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, token } = useAuth();
 
   const [search, setSearch] = useState("");
-  const [tracks, setTracks] = useState([]);
+  const [tracks, setTracks] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const loadedRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Синхронизация поискового запроса с параметром URL
   useEffect(() => {
@@ -22,22 +24,63 @@ export default function Library() {
     setSearch(searchParam);
   }, [location]);
 
+  // Мемоизируем authFetch чтобы он обновлялся при смене token
+  const authFetch = useCallback(async (url: string, options: RequestInit = {}) => {
+    return fetch(url, {
+      ...options,
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        ...options.headers,
+      },
+    });
+  }, [token]);
+
   useEffect(() => {
-    if (isAuthenticated) {
-      fetch("/api/tracks")
-        .then((res) => res.json())
-        .then((data) => {
-          setTracks(Array.isArray(data) ? data : []);
-          setIsLoading(false);
-        })
-        .catch((err) => {
-          console.error("Error loading tracks:", err);
-          setIsLoading(false);
-        });
-    } else {
+    if (!isAuthenticated || loadedRef.current) {
       setIsLoading(false);
+      return;
     }
-  }, [isAuthenticated]);
+
+    loadedRef.current = true;
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+
+    authFetch("http://localhost:3001/api/tracks", { signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        setTracks(Array.isArray(data) ? data : []);
+        setIsLoading(false);
+      })
+      .catch((err) => {
+        if (err.name === 'AbortError') {
+          return;
+        }
+
+        console.error("Error loading tracks:", err);
+        
+        if (err.message?.includes('401')) {
+          console.log('Auth error, redirecting to login...');
+          window.location.href = '/login';
+        }
+        setIsLoading(false);
+      });
+
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [isAuthenticated, authFetch]);
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newSearch = e.target.value;
@@ -77,7 +120,7 @@ export default function Library() {
               <LibraryIcon className="w-8 h-8 text-primary" />
               Медиатека
             </h1>
-            <p className="text-muted-foreground mt-2">Все ваши треки в одном месте.</p>
+            <p className="text-muted-foreground mt-2">Все треки в одном месте.</p>
           </div>
 
           <div className="flex items-center gap-3 w-full md:w-auto">

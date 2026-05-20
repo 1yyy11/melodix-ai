@@ -6,7 +6,7 @@ import NotFound from "@/pages/not-found";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import ListeningHistory from "@/pages/listening-history";
-
+import { AudioPlayer } from "@/components/player/audio-player";
 // Pages
 import Home from "@/pages/home";
 import Generate from "@/pages/generate";
@@ -42,10 +42,10 @@ function Router() {
         </ProtectedRoute>
       </Route>
       <Route path="/history">
-    <ProtectedRoute>
-        <ListeningHistory />
-    </ProtectedRoute>
-</Route>
+        <ProtectedRoute>
+          <ListeningHistory />
+        </ProtectedRoute>
+      </Route>
       <Route path="/library">
         <ProtectedRoute>
           <Library />
@@ -78,18 +78,21 @@ function Router() {
 
 function App() {
   return (
-   <QueryClientProvider client={queryClient}>
-  <AuthProvider>
-    <LyricsProvider>  {/* Добавьте эту строку */}
-      <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <Router />
-        </WouterRouter>
-        <Toaster />
-      </TooltipProvider>
-    </LyricsProvider>  {/* Добавьте эту строку */}
-  </AuthProvider>
-</QueryClientProvider>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <LyricsProvider>
+          <TooltipProvider>
+            
+              <AudioPlayer />
+            <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+              <Router />
+            </WouterRouter>
+            
+            <Toaster />
+          </TooltipProvider>
+        </LyricsProvider>
+      </AuthProvider>
+    </QueryClientProvider>
   );
 }
 

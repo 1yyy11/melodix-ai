@@ -12,6 +12,7 @@ interface PlayerState {
   isMuted: boolean;
   isShuffled: boolean;
   isRepeating: boolean;
+  lastVolume: number;
   
   // Actions
   playTrack: (track: Track, newQueue?: Track[]) => void;
@@ -40,15 +41,20 @@ export const usePlayer = create<PlayerState>((set, get) => ({
   isMuted: false,
   isShuffled: false,
   isRepeating: false,
+  lastVolume: 0.8,
 
+  // ✅ ИСПРАВЛЕНО: не сбрасываем progress если это уже текущий трек
   playTrack: (track, newQueue) => {
-    const queue = newQueue || get().queue;
+    const state = get();
+    const isNewTrack = state.currentTrack?.id !== track.id;
+    const queue = newQueue || state.queue;
     const index = queue.findIndex(t => t.id === track.id);
     
     set({
       currentTrack: track,
       isPlaying: true,
-      progress: 0,
+      // ✅ Сбрасываем progress ТОЛЬКО если это новый трек
+      ...(isNewTrack && { progress: 0 }),
       queue: queue.length > 0 ? queue : [track],
       queueIndex: index >= 0 ? index : 0
     });
@@ -86,7 +92,6 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     const { queue, queueIndex, progress } = get();
     if (queue.length === 0) return;
 
-    // If we're more than 3 seconds in, just restart current track
     if (progress > 3) {
       set({ progress: 0, isPlaying: true });
       return;
@@ -102,14 +107,33 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     });
   },
 
-  setVolume: (vol) => set({ volume: vol, isMuted: vol === 0 }),
+  setVolume: (vol) => {
+    set((state) => ({
+      volume: vol,
+      lastVolume: vol > 0 ? vol : state.lastVolume,
+      isMuted: false
+    }));
+  },
+
   setProgress: (prog) => set({ progress: prog }),
   setDuration: (dur) => set({ duration: dur }),
   
-  toggleMute: () => set((state) => ({ 
-    isMuted: !state.isMuted, 
-    volume: state.isMuted ? 0.8 : 0 
-  })),
+  toggleMute: () => {
+    set((state) => {
+      if (state.isMuted) {
+        return {
+          isMuted: false,
+          volume: state.lastVolume || 0.8
+        };
+      } else {
+        return {
+          isMuted: true,
+          volume: 0,
+          lastVolume: state.volume
+        };
+      }
+    });
+  },
   
   toggleShuffle: () => set((state) => ({ isShuffled: !state.isShuffled })),
   toggleRepeat: () => set((state) => ({ isRepeating: !state.isRepeating })),
@@ -120,7 +144,6 @@ export const usePlayer = create<PlayerState>((set, get) => ({
     
     return {
       queue: [...state.queue, track],
-      // If nothing is playing, play this track
       currentTrack: state.currentTrack || track,
       isPlaying: state.currentTrack ? state.isPlaying : true,
       queueIndex: state.currentTrack ? state.queueIndex : 0
@@ -129,7 +152,25 @@ export const usePlayer = create<PlayerState>((set, get) => ({
 
   removeFromQueue: (trackId) => set((state) => {
     const newQueue = state.queue.filter(t => t.id !== trackId);
-    return { queue: newQueue };
+    const wasCurrentTrack = state.currentTrack?.id === trackId;
+    
+    if (wasCurrentTrack) {
+      const nextIndex = Math.min(state.queueIndex, newQueue.length - 1);
+      return {
+        queue: newQueue,
+        currentTrack: nextIndex >= 0 ? newQueue[nextIndex] : null,
+        queueIndex: nextIndex >= 0 ? nextIndex : -1,
+        isPlaying: nextIndex >= 0 && state.isPlaying
+      };
+    }
+    
+    const deletedIndex = state.queue.findIndex(t => t.id === trackId);
+    const shouldShiftIndex = deletedIndex < state.queueIndex;
+    
+    return {
+      queue: newQueue,
+      queueIndex: shouldShiftIndex ? state.queueIndex - 1 : state.queueIndex
+    };
   }),
 
   clearQueue: () => set({ queue: [], queueIndex: -1, currentTrack: null, isPlaying: false }),

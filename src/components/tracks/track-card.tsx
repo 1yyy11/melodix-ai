@@ -6,14 +6,17 @@ import { formatTime } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { AddToPlaylistDialog } from "@/components/playlists/add-to-playlist-dialog";
-import { useEffect, useState } from "react";
+import { useEffect, useState, memo } from "react";
 
 interface TrackCardProps {
-  track: Track;
+  track: Track & {
+    artist?: string;      // ← из api/tracks
+    artist_name?: string; // ← из api/tracks (аналог)
+  };
   queueContext?: Track[];
 }
 
-export function TrackCard({ track, queueContext = [] }: TrackCardProps) {
+export const TrackCard = memo(function TrackCard({ track, queueContext = [] }: TrackCardProps) {
   const { currentTrack, isPlaying, playTrack, togglePlay } = usePlayer();
   const isCurrentTrack = currentTrack?.id === track.id;
   const isCurrentlyPlaying = isCurrentTrack && isPlaying;
@@ -22,15 +25,54 @@ export function TrackCard({ track, queueContext = [] }: TrackCardProps) {
   const addFav = useAddFavorite();
   const removeFav = useRemoveFavorite();
 
-  // Загружаем имя исполнителя
+  // ✅ Функция для получения имени исполнителя из разных полей
+  const getArtistDisplayName = () => {
+    // Приоритет: artist_name > artist > загруженный из API > заглушка
+    if (track.artist_name) return track.artist_name;
+    if (track.artist) return track.artist;
+    if (artistName) return artistName;
+    return 'Неизвестный исполнитель';
+  };
+
+  // Загружаем имя исполнителя только при смене track.artist_id (если нет прямых полей)
   useEffect(() => {
-    if (track.artist_id) {
-      fetch(`/api/artist/${track.artist_id}`)
-        .then(res => res.json())
-        .then(data => setArtistName(data.name))
-        .catch(err => console.error('Failed to fetch artist:', err));
+    // Если уже есть artist или artist_name — не нужно загружать
+    if (track.artist_name || track.artist) {
+      setArtistName('');
+      return;
     }
-  }, [track.artist_id]);
+
+    if (!track.artist_id) {
+      setArtistName('');
+      return;
+    }
+
+    let isMounted = true;
+
+    fetch(`/api/artist/${track.artist_id}`)
+      .then(res => res.json())
+      .then(data => {
+        if (isMounted && data?.name) {
+          setArtistName(data.name);
+        }
+      })
+      .catch(err => console.error('Failed to fetch artist:', err));
+
+    return () => {
+      isMounted = false;
+    };
+  }, [track.artist_id, track.artist_name, track.artist]);
+
+  // ✅ Форматирование жанра и настроения (убираем unknown/null/undefined)
+  const formatGenreMood = () => {
+    const genre = track.genre && track.genre !== 'unknown' ? track.genre : null;
+    const mood = track.mood && track.mood !== 'unknown' ? track.mood : null;
+    
+    if (genre && mood) return `${genre} • ${mood}`;
+    if (genre) return genre;
+    if (mood) return mood;
+    return '—';
+  };
 
   const handlePlayClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -59,7 +101,11 @@ export function TrackCard({ track, queueContext = [] }: TrackCardProps) {
       {/* Cover Art Area */}
       <div className="relative aspect-square rounded-xl overflow-hidden bg-secondary shadow-md">
         {track.coverUrl ? (
-          <img src={track.coverUrl} alt={track.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+          <img 
+            src={track.coverUrl.startsWith('http') ? track.coverUrl : `http://localhost:3001${track.coverUrl}`} 
+            alt={track.title} 
+            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" 
+          />
         ) : (
           <div className="w-full h-full bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center transition-transform duration-500 group-hover:scale-105">
             <Activity className="w-12 h-12 text-primary/40" />
@@ -111,10 +157,10 @@ export function TrackCard({ track, queueContext = [] }: TrackCardProps) {
           {track.title}
         </h3>
         <p className="text-xs text-muted-foreground truncate">
-          {artistName || 'Неизвестный исполнитель'}
+          {getArtistDisplayName()}
         </p>
         <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span className="truncate">{track.genre}  {track.mood}</span>
+          <span className="truncate text-xs">{formatGenreMood()}</span>
         </div>
         <div className="flex items-center gap-3 text-xs font-mono text-muted-foreground/80 mt-2">
           {track.tempo && (
@@ -129,4 +175,19 @@ export function TrackCard({ track, queueContext = [] }: TrackCardProps) {
       </div>
     </div>
   );
-}
+}, (prevProps, nextProps) => {
+  // Кастомное сравнение для memo — пропускаем перерендер если ничего важного не изменилось
+  if (prevProps.track.id !== nextProps.track.id) return false;
+  if (prevProps.track.isFavorite !== nextProps.track.isFavorite) return false;
+  
+  // Сравниваем artist и artist_name
+  if (prevProps.track.artist !== nextProps.track.artist) return false;
+  if (prevProps.track.artist_name !== nextProps.track.artist_name) return false;
+  
+  // Для queueContext сравниваем по длине
+  const prevLen = prevProps.queueContext?.length ?? 0;
+  const nextLen = nextProps.queueContext?.length ?? 0;
+  if (prevLen !== nextLen) return false;
+  
+  return true;
+});

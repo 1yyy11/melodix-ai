@@ -18,25 +18,36 @@ interface Recommendation {
 }
 
 export function RecommendationsSection() {
-    const { token } = useAuth();
+    const { isAuthenticated } = useAuth();  // ← ИЗМЕНИ: используй isAuthenticated вместо token
     const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
+        if (!isAuthenticated) {
+            setIsLoading(false);
+            return;
+        }
+
         fetchRecommendations();
-    }, [token]);
+    }, [isAuthenticated]);  // ← ИЗМЕНИ: зависимость от isAuthenticated
 
     const fetchRecommendations = async () => {
         try {
             const response = await fetch('http://localhost:3001/api/recommendations', {
-                headers: { 'Authorization': `Bearer ${token}` }
+                credentials: 'include'  // ← ТОЛЬКО ЭТО, убрал Bearer token
             });
+
             if (response.ok) {
                 const data = await response.json();
+                 console.log('📊 Raw recommendations from API:', data); 
+                console.log('✅ Recommendations loaded:', data);
                 setRecommendations(data);
+            } else if (response.status === 401) {
+                console.warn('⚠️ Unauthorized');
+                setRecommendations([]);
             }
         } catch (error) {
-            console.error('Error fetching recommendations:', error);
+            console.error('❌ Error fetching recommendations:', error);
         } finally {
             setIsLoading(false);
         }

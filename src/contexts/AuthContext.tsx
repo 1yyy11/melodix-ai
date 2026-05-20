@@ -1,162 +1,248 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+// src/contexts/AuthContext.tsx
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  ReactNode,
+} from "react";
 
-interface User {
+const API_URL = "http://localhost:3001/api";
+
+// ===================== TYPES =====================
+
+export interface User {
   id: string;
   email: string;
-  firstName?: string;
-  lastName?: string;
-  profileImageUrl?: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  profileImageUrl?: string | null;
 }
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
-  error: string | null;
-  login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, firstName?: string, lastName?: string) => Promise<void>;
-  logout: () => Promise<void>;
-  updateProfile: (data: Partial<User>) => Promise<void>;
   isAuthenticated: boolean;
-  token: string | null;
+
+  login: (email: string, password: string) => Promise<User>;
+  googleLogin: (token: string) => Promise<User>;
+  register: (
+    email: string,
+    password: string,
+    firstName?: string,
+    lastName?: string
+  ) => Promise<User>;
+  logout: () => Promise<void>;
+  refreshUser: () => Promise<User | null>;
 }
+
+// ===================== CONTEXT =====================
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const API_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
+// ===================== TOKEN HELPERS =====================
 
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within AuthProvider');
-  }
-  return context;
-};
+const getToken = () => localStorage.getItem("token");
+const setToken = (token: string) => localStorage.setItem("token", token);
+const removeToken = () => localStorage.removeItem("token");
 
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+// ===================== PROVIDER =====================
+
+export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
+  // ================= INIT AUTH =================
   useEffect(() => {
-    // Проверяем сохраненного пользователя при загрузке
-    const storedToken = localStorage.getItem('auth_token');
-    const storedUser = localStorage.getItem('user');
-    
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
-    }
-    setIsLoading(false);
+    initAuth();
   }, []);
 
-  const login = async (email: string, password: string) => {
-    setError(null);
+  const initAuth = async () => {
     try {
-      const response = await fetch(`${API_URL}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+      // 🔥 ПЫТАЕМСЯ ПОЛУЧИТЬ ПОЛЬЗОВАТЕЛЯ ЧЕРЕЗ COOKIE
+      const res = await fetch(`${API_URL}/user`, {
+        credentials: "include", // ✅ отправляем httpOnly cookie
       });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || 'Login failed');
+
+      if (res.ok) {
+        const data = await res.json();
+        console.log("✅ User loaded from cookie:", data);
+        setUser(data);
+        setIsLoading(false);
+        return;
       }
-      
-      localStorage.setItem('auth_token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      setToken(data.token);
-      setUser(data.user);
-      
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed');
-      throw err;
+
+      // 🔥 ЕСЛИ COOKIE НЕ СРАБОТАЛ, ПРОБУЕМ JWT ИЗ LOCALSTORAGE
+      const token = getToken();
+      if (token) {
+        const res2 = await fetch(`${API_URL}/user`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (res2.ok) {
+          const data = await res2.json();
+          console.log("✅ User loaded from token:", data);
+          setUser(data);
+          setIsLoading(false);
+          return;
+        } else {
+          removeToken();
+        }
+      }
+
+      setUser(null);
+    } catch (error) {
+      console.error("Init auth error:", error);
+      setUser(null);
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const register = async (email: string, password: string, firstName?: string, lastName?: string) => {
-    setError(null);
-    try {
-      const response = await fetch(`${API_URL}/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password, firstName, lastName }),
-      });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.error || 'Registration failed');
-      }
-      
-      localStorage.setItem('auth_token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
+  // ================= LOGIN =================
+
+  const login = async (email: string, password: string) => {
+    const res = await fetch(`${API_URL}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email, password }),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) throw new Error(data.error || "Login failed");
+
+    if (data.token) {
       setToken(data.token);
-      setUser(data.user);
-      
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Registration failed');
-      throw err;
     }
+
+    setUser(data.user);
+    return data.user;
   };
+
+  // ================= GOOGLE LOGIN =================
+
+  const googleLogin = async (googleToken: string) => {
+    console.log("🔐 googleLogin called");
+    
+    const res = await fetch(`${API_URL}/auth/google`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ token: googleToken }),
+    });
+
+    const data = await res.json();
+    console.log("📦 Google response:", data);
+
+    if (!res.ok) {
+      throw new Error(data.message || "Google login failed");
+    }
+
+    if (data.accessToken) {
+      setToken(data.accessToken);
+    }
+
+    setUser(data.user);
+    return data.user;
+  };
+
+  // ================= REGISTER =================
+
+  const register = async (
+    email: string,
+    password: string,
+    firstName?: string,
+    lastName?: string
+  ) => {
+    const res = await fetch(`${API_URL}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email, password, firstName, lastName }),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) throw new Error(data.error || "Register failed");
+
+    if (data.token) {
+      setToken(data.token);
+    }
+
+    setUser(data.user);
+    return data.user;
+  };
+
+  // ================= LOGOUT =================
 
   const logout = async () => {
-    setError(null);
     try {
-      await fetch(`${API_URL}/auth/logout`, { method: 'POST' });
-    } catch (err) {
-      console.error('Logout error:', err);
+      await fetch(`${API_URL}/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch (error) {
+      console.error("Logout error:", error);
     } finally {
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('user');
-      setToken(null);
+      removeToken();
       setUser(null);
     }
   };
 
-  const updateProfile = async (data: Partial<User>) => {
-    setError(null);
+  // ================= REFRESH =================
+
+  const refreshUser = async () => {
     try {
-      const response = await fetch(`${API_URL}/user`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify(data),
+      const res = await fetch(`${API_URL}/user`, {
+        credentials: "include",
       });
-      
-      if (!response.ok) {
-        throw new Error('Failed to update profile');
+
+      if (!res.ok) {
+        removeToken();
+        setUser(null);
+        return null;
       }
-      
-      const updatedUser = await response.json();
-      localStorage.setItem('user', JSON.stringify(updatedUser));
-      setUser(updatedUser);
-      
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Update failed');
-      throw err;
+
+      const data = await res.json();
+      setUser(data);
+      return data;
+    } catch {
+      removeToken();
+      setUser(null);
+      return null;
     }
   };
 
+  // ================= VALUE =================
+
+  const value: AuthContextType = {
+    user,
+    isLoading,
+    isAuthenticated: !!user,
+    login,
+    googleLogin,
+    register,
+    logout,
+    refreshUser,
+  };
+
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        isLoading,
-        error,
-        login,
-        register,
-        logout,
-        updateProfile,
-        isAuthenticated: !!user,
-        token,
-      }}
-    >
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );
+};
+
+// ================= HOOK =================
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+
+  if (!context) {
+    throw new Error("useAuth must be used within AuthProvider");
+  }
+
+  return context;
 };
