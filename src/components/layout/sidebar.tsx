@@ -30,7 +30,7 @@ export function Sidebar({ className }: SidebarProps) {
     { icon: Library, label: "Медиатека", href: "/library", requiresAuth: true },
     { icon: Heart, label: "Избранное", href: "/favorites", requiresAuth: true },
     { icon: ListMusic, label: "Плейлисты", href: "/playlists", requiresAuth: true },
-    { icon: History, label: "История", href: "/history", requiresAuth: true },
+    // { icon: History, label: "История", href: "/history", requiresAuth: true },
   ];
 
   return (
@@ -39,9 +39,12 @@ export function Sidebar({ className }: SidebarProps) {
         <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center shadow-lg shadow-primary/20">
           <Music2 className="w-6 h-6 text-white" />
         </div>
-        <h1 className="text-2xl font-display font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-white/70">
-          Melodix<span className="text-primary">AI</span>
-        </h1>
+       <h1 className="text-2xl font-display font-bold">
+  <span className="bg-clip-text text-transparent bg-gradient-to-r dark:from-white dark:to-white/70 from-orange-400 to-orange-200">
+    Melodix
+  </span>
+  <span className="text-primary">AI</span>
+</h1>
       </div>
 
       <div className="px-4 py-2">

@@ -1,8 +1,10 @@
-import { Bell, Menu } from "lucide-react";
+import { Bell, Menu, Sun, Moon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTheme } from "next-themes";
 
 export function Topbar() {
+  const { theme, setTheme } = useTheme();
   const { isAuthenticated, login } = useAuth();
 
   return (
@@ -14,6 +16,20 @@ export function Topbar() {
       </div>
 
       <div className="flex items-center gap-4">
+        {/* Кнопка переключения темы */}
+       <Button
+  variant="ghost"
+  size="icon"
+  onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+  className="rounded-full hover:bg-primary/10"
+>
+  {theme === "dark" ? (
+    <Sun className="w-5 h-5 text-yellow-500" />
+  ) : (
+    <Moon className="w-5 h-5 text-slate-700" />
+  )}
+</Button>
+
         {isAuthenticated ? (
           <Button variant="ghost" size="icon" className="rounded-full relative">
             <Bell className="w-5 h-5 text-muted-foreground" />

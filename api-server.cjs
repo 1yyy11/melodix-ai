@@ -764,6 +764,7 @@ app.get('/api/user/history', requireAuth, async (req, res) => {
 
 app.get('/api/user/stats', requireAuth, async (req, res) => {
     try {
+        // Базовые счётчики
         const tracksResult = await pool.query(
             `SELECT COUNT(*) FROM tracks WHERE user_id = $1`,
             [req.userId]
@@ -783,12 +784,64 @@ app.get('/api/user/stats', requireAuth, async (req, res) => {
             'SELECT COUNT(*) FROM plays WHERE user_id = $1',
             [req.userId]
         );
+
+        // Время прослушивания (сумма duration всех plays)
+        const listeningTimeResult = await pool.query(`
+            SELECT COALESCE(SUM(t.duration), 0) as total_seconds
+            FROM plays p
+            JOIN tracks t ON p.track_id = t.id
+            WHERE p.user_id = $1
+        `, [req.userId]);
+
+        // Любимый жанр
+        const favoriteGenreResult = await pool.query(`
+            SELECT t.genre, COUNT(*) as count
+            FROM plays p
+            JOIN tracks t ON p.track_id = t.id
+            WHERE p.user_id = $1 AND t.genre IS NOT NULL AND t.genre != ''
+            GROUP BY t.genre
+            ORDER BY count DESC
+            LIMIT 1
+        `, [req.userId]);
+
+        // Любимое настроение
+        const favoriteMoodResult = await pool.query(`
+            SELECT t.mood, COUNT(*) as count
+            FROM plays p
+            JOIN tracks t ON p.track_id = t.id
+            WHERE p.user_id = $1 AND t.mood IS NOT NULL AND t.mood != ''
+            GROUP BY t.mood
+            ORDER BY count DESC
+            LIMIT 1
+        `, [req.userId]);
+
+        // Серия дней ( streak ) — сколько дней подряд слушал
+        const streakResult = await pool.query(`
+            WITH daily_plays AS (
+                SELECT DISTINCT DATE(played_at) as play_date
+                FROM plays
+                WHERE user_id = $1
+                ORDER BY play_date DESC
+            ),
+            streak_calc AS (
+                SELECT play_date,
+                       play_date - (ROW_NUMBER() OVER (ORDER BY play_date DESC))::int AS streak_group
+                FROM daily_plays
+            )
+            SELECT COUNT(*) as streak
+            FROM streak_calc
+            WHERE streak_group = (SELECT streak_group FROM streak_calc LIMIT 1)
+        `, [req.userId]);
         
         res.json({
             generatedTracks: parseInt(tracksResult.rows[0].count) || 0,
             favorites: parseInt(favoritesResult.rows[0].count) || 0,
             playlists: parseInt(playlistsResult.rows[0].count) || 0,
-            totalPlays: parseInt(playsResult.rows[0].count) || 0
+            totalPlays: parseInt(playsResult.rows[0].count) || 0,
+            listeningTime: Math.floor(parseInt(listeningTimeResult.rows[0].total_seconds) / 60),
+            streak: parseInt(streakResult.rows[0]?.streak) || 0,
+            favoriteGenre: favoriteGenreResult.rows[0]?.genre || 'Недостаточно данных',
+            favoriteMood: favoriteMoodResult.rows[0]?.mood || 'Недостаточно данных'
         });
     } catch (error) {
         console.error('Error fetching user stats:', error);
@@ -929,29 +982,71 @@ app.get('/api/recommendations', requireAuth, async (req, res) => {
         res.status(500).json({ error: 'Failed to get recommendations' });
     }
 });
-app.get('/api/recommendations', requireAuth, async (req, res) => {
-    try {
-        const result = await pool.query(`
-            SELECT r.*, t.title, a.name as artist_name, t.genre, t.mood, t.tempo, t.duration, t.cover_url
-            FROM recommendations r
-            JOIN tracks t ON r.track_id = t.id
-            JOIN artists a ON t.artist_id = a.id
-            WHERE r.user_id = $1 AND r.expires_at > NOW()
-            ORDER BY r.score DESC
-            LIMIT 30
-        `, [req.userId]);
-        
-        res.json(result.rows);
-    } catch (error) {
-        console.error('Error fetching recommendations:', error);
-        res.status(500).json({ error: 'Failed to get recommendations' });
-    }
-});
+
 
 app.post('/api/recommendations/refresh', requireAuth, async (req, res) => {
     res.json({ success: true, message: 'Recommendations refresh started' });
 });
 
+app.get('/api/user/activity', requireAuth, async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 10;
+        
+        // Последние прослушивания
+        const plays = await pool.query(`
+            SELECT 
+                'play' as type,
+                t.title,
+                p.played_at as timestamp,
+                t.genre as details
+            FROM plays p
+            JOIN tracks t ON p.track_id = t.id
+            WHERE p.user_id = $1
+            ORDER BY p.played_at DESC
+            LIMIT $2
+        `, [req.userId, limit]);
+
+        // Последние добавления в избранное
+        const favorites = await pool.query(`
+            SELECT 
+                'favorite' as type,
+                t.title,
+                f.created_at as timestamp,
+                NULL as details
+            FROM favorites f
+            JOIN tracks t ON f.track_id = t.id
+            WHERE f.user_id = $1
+            ORDER BY f.created_at DESC
+            LIMIT $2
+        `, [req.userId, Math.floor(limit / 2)]);
+
+        // Последние созданные плейлисты
+        const playlists = await pool.query(`
+            SELECT 
+                'create' as type,
+                name as title,
+                created_at as timestamp,
+                'Плейлист' as details
+            FROM playlists
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2
+        `, [req.userId, Math.floor(limit / 3)]);
+
+        // Объединяем и сортируем по времени
+        const allActivity = [
+            ...plays.rows,
+            ...favorites.rows,
+            ...playlists.rows
+        ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+         .slice(0, limit);
+
+        res.json({ activities: allActivity });
+    } catch (error) {
+        console.error('Error fetching activity:', error);
+        res.status(500).json({ error: 'Failed to get activity' });
+    }
+});
 // ============= LYRICS ENDPOINTS =============
 
 app.get('/api/lyrics', async (req, res) => {
